@@ -1,0 +1,12 @@
+.git
+.next
+.sites-runtime
+.vinext
+.wrangler
+dist
+node_modules
+gateway/dist
+gateway/node_modules
+npm-debug.log*
+.env*
+!.env.example

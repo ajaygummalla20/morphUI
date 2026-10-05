@@ -1,0 +1,65 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: morphui-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: morphui
+      POSTGRES_USER: morphui
+      POSTGRES_PASSWORD: morphui_dev
+    ports:
+      - "5434:5432"
+    volumes:
+      - morphui_postgres_data:/var/lib/postgresql/data
+      - ./gateway/docker/001-readonly-role.sql:/docker-entrypoint-initdb.d/001-readonly-role.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U morphui -d morphui"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  gateway:
+    build:
+      context: .
+      dockerfile: gateway/Dockerfile
+    container_name: morphui-gateway
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PORT: 8788
+      DATABASE_URL: postgresql://morph_gateway_reader:morph_gateway_dev@postgres:5432/morphui
+      MORPH_GATEWAY_SERVICE_TOKEN: ${MORPH_GATEWAY_SERVICE_TOKEN:-morph-local-gateway-token-change-me}
+      MORPH_GATEWAY_POLICY_PATH: /app/gateway/config/policy.json
+      MORPH_GATEWAY_ID: atlas-local-gateway
+      MORPH_GATEWAY_AUDIT_HASH_SALT: ${MORPH_GATEWAY_AUDIT_HASH_SALT:-morph-local-audit-salt-change-me}
+      MORPH_GATEWAY_OIDC_ISSUER: ${MORPH_GATEWAY_OIDC_ISSUER:-https://identity.atlas.example}
+      MORPH_GATEWAY_OIDC_AUDIENCE: ${MORPH_GATEWAY_OIDC_AUDIENCE:-morph-gateway}
+      MORPH_GATEWAY_OIDC_JWKS_URL: ${MORPH_GATEWAY_OIDC_JWKS_URL:-https://identity.atlas.example/.well-known/jwks.json}
+      MORPH_GATEWAY_OIDC_MAX_TOKEN_AGE_SECONDS: ${MORPH_GATEWAY_OIDC_MAX_TOKEN_AGE_SECONDS:-300}
+      MORPH_GATEWAY_OIDC_CLOCK_TOLERANCE_SECONDS: ${MORPH_GATEWAY_OIDC_CLOCK_TOLERANCE_SECONDS:-30}
+      MORPH_GATEWAY_OIDC_JWKS_CACHE_SECONDS: ${MORPH_GATEWAY_OIDC_JWKS_CACHE_SECONDS:-300}
+    ports:
+      - "127.0.0.1:8788:8788"
+    volumes:
+      - ./gateway/config/policy.example.json:/app/gateway/config/policy.json:ro
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:8788/v1/health',{headers:{Authorization:'Bearer '+process.env.MORPH_GATEWAY_SERVICE_TOKEN}}).then(r=>{if(!r.ok)process.exit(1)})
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  morphui_postgres_data:

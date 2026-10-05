@@ -1,0 +1,105 @@
+{
+  "version": "atlas-policy-2026-08-12",
+  "catalogVersion": "insurance-catalog-2026-09-01",
+  "organizationId": "org_atlas_insurance",
+  "connectorId": "connector_production_postgresql",
+  "identities": {
+    "users": {
+      "kiran@atlas.example": ["Workspace admins"]
+    },
+    "emailDomains": {
+      "atlas.example": ["Operations team"]
+    }
+  },
+  "groups": {
+    "Workspace admins": ["policies", "claims", "endorsements"],
+    "Operations team": ["policies", "endorsements"],
+    "Claims managers": ["claims"],
+    "Support leads": ["endorsements"]
+  },
+  "onboardingAdminGroups": ["Workspace admins"],
+  "entities": {
+    "policies": {
+      "source": "policies_read_replica",
+      "fields": [
+        "policy_number",
+        "customer_name",
+        "product",
+        "branch",
+        "relationship_manager",
+        "start_date",
+        "expiry_date",
+        "total_premium",
+        "status",
+        "renewal_status",
+        "propensity_score"
+      ],
+      "filterOperators": {
+        "expiry_date": ["between"],
+        "total_premium": ["greater_than"],
+        "status": ["equals", "in"],
+        "product": ["equals", "in"],
+        "branch": ["equals", "in"],
+        "relationship_manager": ["equals", "in"],
+        "renewal_status": ["equals", "in"],
+        "propensity_score": ["greater_than", "less_than"]
+      },
+      "groupBy": ["product", "branch", "relationship_manager", "status", "renewal_status"],
+      "sortBy": ["policy_number", "customer_name", "product", "branch", "relationship_manager", "start_date", "expiry_date", "total_premium", "status", "renewal_status", "propensity_score"],
+      "maximumRows": 200
+    },
+    "claims": {
+      "source": "claims_read_replica",
+      "fields": [
+        "claim_number",
+        "policy_number",
+        "customer_name",
+        "branch",
+        "intimation_date",
+        "claimed_amount",
+        "approved_amount",
+        "status",
+        "cause"
+      ],
+      "filterOperators": {
+        "intimation_date": ["before", "after", "between", "current_month"],
+        "claimed_amount": ["greater_than", "less_than"],
+        "approved_amount": ["greater_than", "less_than"],
+        "status": ["equals", "in"],
+        "branch": ["equals", "in"],
+        "cause": ["equals", "in"]
+      },
+      "groupBy": ["branch", "status", "cause"],
+      "sortBy": ["claim_number", "policy_number", "customer_name", "branch", "intimation_date", "claimed_amount", "approved_amount", "status"],
+      "maximumRows": 200
+    },
+    "endorsements": {
+      "source": "endorsements_read_replica",
+      "fields": [
+        "endorsement_number",
+        "policy_number",
+        "customer_name",
+        "type",
+        "status",
+        "requested_at",
+        "effective_date",
+        "premium_delta",
+        "branch"
+      ],
+      "filterOperators": {
+        "status": ["equals", "in"],
+        "type": ["equals", "in"],
+        "requested_at": ["before", "after", "between", "current_month"],
+        "effective_date": ["before", "after", "between"],
+        "premium_delta": ["greater_than", "less_than"],
+        "branch": ["equals", "in"]
+      },
+      "groupBy": ["type", "status", "branch"],
+      "sortBy": ["endorsement_number", "policy_number", "customer_name", "type", "status", "requested_at", "effective_date", "premium_delta", "branch"],
+      "maximumRows": 200
+    }
+  },
+  "masking": {
+    "customer_name": "partial"
+  }
+}
