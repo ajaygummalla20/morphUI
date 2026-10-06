@@ -83,6 +83,7 @@
     "wrangler": "4.147.0"
   },
   "overrides": {
+    "sharp": "0.35.5",
     "vinext@0.0.50": {
       "image-size": "2.0.4"
     }

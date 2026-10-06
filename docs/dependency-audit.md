@@ -4,6 +4,10 @@ The release updates Next.js to 16.3.8, its ESLint config to 16.3.8, Cloudflare's
 Vite plugin to 1.62.5, Wrangler to 4.147.0 and Workers types to 5.20261006.1.
 It updates the vulnerable source-map-js dependency to the patched 1.2.2 line.
 Authentication uses jose 6.2.12 with RS256, fixed issuer/audience and nonce checks.
+Sharp is pinned to 0.35.5 through a root override for the newly reported
+[GHSA-wq5f-xc86-pv6w](https://github.com/advisories/GHSA-wq5f-xc86-pv6w).
+Miniflare currently pins the vulnerable 0.35.4 release; the override applies the
+compatible security patch without downgrading the Cloudflare toolchain.
 Geist 1.7.2 supplies local font files, so builds and page rendering do not depend
 on a Google Fonts download. The rendered-page test verifies both emitted assets.
 
