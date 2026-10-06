@@ -1,6 +1,9 @@
 import { env } from "cloudflare:workers";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray, or } from "drizzle-orm";
+import { demoMode, requireSession } from '@/lib/auth/session';
+import { SecurityError, assertRole } from '@/lib/server/security';
 import { drizzle } from "drizzle-orm/d1";
+import type { BatchItem } from 'drizzle-orm/batch';
 import type { DynamicWorkspaceResponse } from "@/lib/workspaces/dynamic";
 import {
   insuranceSemanticCatalog,
@@ -38,11 +41,11 @@ export function getAppStateDb() {
 }
 
 export async function ensureAppActor(request: Request): Promise<AppActor> {
+  const session = await requireSession(request);
+  if (!demoMode()) return session;
   const db = getAppStateDb();
-  const email =
-    request.headers.get("oai-authenticated-user-email")?.trim().toLowerCase() ||
-    "kiran@atlas.example";
-  const fullName = decodeUserName(request) ?? "Kiran S.";
+  const email = session.email;
+  const fullName = session.fullName;
 
   await db
     .insert(schema.organizations)
@@ -116,7 +119,7 @@ export async function loadAppState(actor: AppActor): Promise<AppStateBootstrap> 
         where: eq(schema.organizations.id, actor.organizationId),
       }),
       db.query.savedWorkspaces.findMany({
-        where: eq(schema.savedWorkspaces.ownerUserId, actor.id),
+        where: and(eq(schema.savedWorkspaces.organizationId,actor.organizationId),or(eq(schema.savedWorkspaces.ownerUserId, actor.id),eq(schema.savedWorkspaces.shared,true))),
         orderBy: [desc(schema.savedWorkspaces.updatedAt)],
         limit: 50,
       }),
@@ -128,12 +131,12 @@ export async function loadAppState(actor: AppActor): Promise<AppStateBootstrap> 
         where: eq(schema.dataConnectors.organizationId, actor.organizationId),
         orderBy: [desc(schema.dataConnectors.updatedAt)],
       }),
-      db.query.connectorPermissions.findMany(),
+      db.query.connectorPermissions.findMany({where:inArray(schema.connectorPermissions.connectorId,db.select({id:schema.dataConnectors.id}).from(schema.dataConnectors).where(eq(schema.dataConnectors.organizationId,actor.organizationId)))}),
       db.query.userPreferences.findFirst({
         where: eq(schema.userPreferences.userId, actor.id),
       }),
       db.query.auditEvents.findMany({
-        where: eq(schema.auditEvents.organizationId, actor.organizationId),
+        where: and(eq(schema.auditEvents.organizationId, actor.organizationId),actor.role === 'admin' ? undefined : eq(schema.auditEvents.actorUserId,actor.id)),
         orderBy: [desc(schema.auditEvents.createdAt)],
         limit: 100,
       }),
@@ -159,7 +162,7 @@ export async function loadAppState(actor: AppActor): Promise<AppStateBootstrap> 
       fullName: actor.fullName,
       role: actor.role,
     },
-    savedWorkspaces: workspaces.map(mapSavedWorkspace),
+    savedWorkspaces: workspaces.map(row=>({...mapSavedWorkspace(row),canEdit:row.ownerUserId === actor.id})),
     accessRules: rules.map(mapAccessRule),
     connectors: connectors.map(mapConnector),
     approvedTables: permissions
@@ -167,7 +170,7 @@ export async function loadAppState(actor: AppActor): Promise<AppStateBootstrap> 
         (permission) =>
           permission.enabled &&
           permission.connectorId ===
-            (activeConnector?.id ?? DEFAULT_CONNECTOR_ID),
+            activeConnector?.id,
       )
       .map((permission) => permission.tableName),
     preferences: {
@@ -182,6 +185,7 @@ export async function saveWorkspace(
   actor: AppActor,
   workspace: SavedWorkspaceRecord,
 ) {
+  assertRole(actor.role,'member');
   const db = getAppStateDb();
   await db
     .insert(schema.savedWorkspaces)
@@ -193,7 +197,7 @@ export async function saveWorkspace(
       prompt: workspace.prompt,
       intent: workspace.data?.intent ?? null,
       sourceMode: workspace.data?.sourceMode ?? null,
-      workspaceJson: workspace.data ? JSON.stringify(sanitizeWorkspace(workspace.data)) : null,
+      workspaceJson: null,
       pinned: workspace.pinned,
       lastOpenedAt: new Date().toISOString(),
     })
@@ -203,7 +207,7 @@ export async function saveWorkspace(
         title: workspace.title,
         intent: workspace.data?.intent ?? null,
         sourceMode: workspace.data?.sourceMode ?? null,
-        workspaceJson: workspace.data ? JSON.stringify(sanitizeWorkspace(workspace.data)) : null,
+        workspaceJson: null,
         pinned: workspace.pinned,
         updatedAt: new Date().toISOString(),
       },
@@ -213,7 +217,7 @@ export async function saveWorkspace(
     target: workspace.title,
     outcome: "success",
     requestId: `req_${crypto.randomUUID()}`,
-    details: { prompt: workspace.prompt, sourceMode: workspace.data?.sourceMode },
+    details: { sourceMode: workspace.data?.sourceMode },
   });
 }
 
@@ -221,14 +225,15 @@ export async function replaceRules(
   actor: AppActor,
   rules: AccessRuleRecord[],
 ) {
+  assertRole(actor.role,'admin');
   const db = getAppStateDb();
-  await db
+  const deletion = db
     .delete(schema.accessRules)
     .where(eq(schema.accessRules.organizationId, actor.organizationId));
   if (rules.length) {
-    await db.insert(schema.accessRules).values(
+    await db.batch([deletion,db.insert(schema.accessRules).values(
       rules.map((rule) => ({
-        id: rule.id,
+        id: crypto.randomUUID(),
         organizationId: actor.organizationId,
         name: rule.name,
         datasetScope: rule.scope,
@@ -238,8 +243,8 @@ export async function replaceRules(
         enabled: rule.enabled,
         createdByUserId: actor.id,
       })),
-    );
-  }
+    )]);
+  } else await deletion;
   await recordAudit(actor, {
     action: "Access rules updated",
     target: `${rules.length} organization rules`,
@@ -250,6 +255,7 @@ export async function replaceRules(
 }
 
 export async function addConnector(actor: AppActor, connector: ConnectorRecord) {
+  assertRole(actor.role,'admin');
   const db = getAppStateDb();
   await db.insert(schema.dataConnectors).values({
     id: connector.id,
@@ -260,8 +266,8 @@ export async function addConnector(actor: AppActor, connector: ConnectorRecord) 
     privateHost: connector.host,
     databaseName: connector.databaseName,
     region: connector.region,
-    status: connector.status,
-    lastCheckedAt: connector.lastCheckedAt,
+    status: 'draft',
+    lastCheckedAt: null,
   });
   await recordAudit(actor, {
     action:
@@ -284,6 +290,7 @@ export async function setConnectorPermissions(
   connectorId: string,
   tables: string[],
 ) {
+  assertRole(actor.role,'admin');
   const db = getAppStateDb();
   const connector = await db.query.dataConnectors.findFirst({
     where: and(
@@ -291,13 +298,13 @@ export async function setConnectorPermissions(
       eq(schema.dataConnectors.organizationId, actor.organizationId),
     ),
   });
-  if (!connector) throw new Error("Connector not found in the active organization.");
+  if (!connector) throw new SecurityError(404,'connector_not_found',"Connector not found in the active organization.");
 
-  await db
+  const deletion = db
     .delete(schema.connectorPermissions)
     .where(eq(schema.connectorPermissions.connectorId, connectorId));
   if (tables.length) {
-    await db.insert(schema.connectorPermissions).values(
+    await db.batch([deletion,db.insert(schema.connectorPermissions).values(
       tables.map((tableName) => ({
         id: crypto.randomUUID(),
         connectorId,
@@ -306,8 +313,8 @@ export async function setConnectorPermissions(
         maskedFieldsJson: "[]",
         enabled: true,
       })),
-    );
-  }
+    )]);
+  } else await deletion;
   await recordAudit(actor, {
     action: "Connector permissions updated",
     target: connector.name,
@@ -326,8 +333,12 @@ export async function activateConnector(
     policyVersion: string;
   },
 ) {
+  assertRole(actor.role,'admin');
   const db = getAppStateDb();
+  const owned = await db.query.dataConnectors.findFirst({where:eq(schema.dataConnectors.id,input.connector.id)});
+  if (owned && owned.organizationId !== actor.organizationId) throw new SecurityError(404,'connector_not_found','Connector not found in the active organization.');
   const catalog = semanticCatalogSchema.parse(input.catalog);
+  if (catalog.entities.some(entity=>!entity.schemaVerified)) throw new SecurityError(400,'schema_not_verified','Onboarding requires a verified schema probe.');
   const selected = new Set(input.selectedEntities);
   const entities = catalog.entities.filter((entity) => selected.has(entity.entity));
   if (!entities.length || entities.length !== selected.size) {
@@ -337,7 +348,7 @@ export async function activateConnector(
     throw new Error("Only a verified PostgreSQL connector can be activated.");
   }
 
-  await db
+  const connectorWrite = db
     .insert(schema.dataConnectors)
     .values({
       id: input.connector.id,
@@ -353,6 +364,7 @@ export async function activateConnector(
     })
     .onConflictDoUpdate({
       target: schema.dataConnectors.id,
+      setWhere:eq(schema.dataConnectors.organizationId,actor.organizationId),
       set: {
         name: input.connector.name,
         privateHost: input.connector.host,
@@ -364,8 +376,12 @@ export async function activateConnector(
       },
     });
 
-  await db.delete(schema.connectorPermissions).where(eq(schema.connectorPermissions.connectorId, input.connector.id));
-  await db.insert(schema.connectorPermissions).values(
+  // New IDs are inserted without upsert: concurrent cross-tenant creation must fail
+  // the complete batch, never proceed to child-record replacement.
+  const initialWrite = owned ? connectorWrite : db.insert(schema.dataConnectors).values({id:input.connector.id,organizationId:actor.organizationId,createdByUserId:actor.id,name:input.connector.name,engine:input.connector.engine,privateHost:input.connector.host,databaseName:input.connector.databaseName,region:input.connector.region,status:'healthy',lastCheckedAt:input.connector.lastCheckedAt});
+  const writes: BatchItem<'sqlite'>[] = [initialWrite,
+  db.delete(schema.connectorPermissions).where(eq(schema.connectorPermissions.connectorId, input.connector.id)),
+  db.insert(schema.connectorPermissions).values(
     entities.map((entity) => ({
       id: crypto.randomUUID(),
       connectorId: input.connector.id,
@@ -374,16 +390,9 @@ export async function activateConnector(
       maskedFieldsJson: JSON.stringify(entity.fields.filter((field) => field.masked).map((field) => field.name)),
       enabled: true,
     })),
-  );
-
-  const previousSnapshots = await db.query.catalogSnapshots.findMany({
-    where: eq(schema.catalogSnapshots.connectorId, input.connector.id),
-  });
-  for (const snapshot of previousSnapshots) {
-    await db.delete(schema.catalogSnapshots).where(eq(schema.catalogSnapshots.id, snapshot.id));
-  }
+  ),db.delete(schema.catalogSnapshots).where(eq(schema.catalogSnapshots.connectorId,input.connector.id))];
   const snapshotId = crypto.randomUUID();
-  await db.insert(schema.catalogSnapshots).values({
+  writes.push(db.insert(schema.catalogSnapshots).values({
     id: snapshotId,
     connectorId: input.connector.id,
     catalogVersion: catalog.catalogVersion,
@@ -397,11 +406,11 @@ export async function activateConnector(
       rawSqlAccepted: false,
     }),
     syncedAt: new Date().toISOString(),
-  });
+  }));
 
   for (const entity of entities) {
     const catalogEntityId = crypto.randomUUID();
-    await db.insert(schema.catalogEntities).values({
+    writes.push(db.insert(schema.catalogEntities).values({
       id: catalogEntityId,
       snapshotId,
       entityName: entity.entity,
@@ -415,8 +424,8 @@ export async function activateConnector(
       maximumRows: entity.maximumRows,
       synonymsJson: JSON.stringify(entity.synonyms),
       defaultFieldsJson: JSON.stringify(entity.defaultFields),
-    });
-    await db.insert(schema.catalogFields).values(
+    }));
+    writes.push(db.insert(schema.catalogFields).values(
       entity.fields.map((field) => ({
         id: crypto.randomUUID(),
         catalogEntityId,
@@ -434,8 +443,8 @@ export async function activateConnector(
         filterOperatorsJson: JSON.stringify(field.filterOperators),
         aggregationsJson: JSON.stringify(field.aggregations),
       })),
-    );
-    await db.insert(schema.catalogMetrics).values(
+    ));
+    if (entity.metrics.length) writes.push(db.insert(schema.catalogMetrics).values(
       entity.metrics.map((metric) => ({
         id: crypto.randomUUID(),
         catalogEntityId,
@@ -446,13 +455,13 @@ export async function activateConnector(
         fieldName: metric.field,
         displayFormat: metric.format,
       })),
-    );
+    ));
   }
   const selectedRelationships = catalog.relationships.filter(
     (relationship) => selected.has(relationship.fromEntity) && selected.has(relationship.toEntity),
   );
   if (selectedRelationships.length) {
-    await db.insert(schema.catalogRelationships).values(
+    writes.push(db.insert(schema.catalogRelationships).values(
       selectedRelationships.map((relationship) => ({
         id: crypto.randomUUID(),
         snapshotId,
@@ -464,8 +473,9 @@ export async function activateConnector(
         relationshipKind: relationship.kind,
         label: relationship.label,
       })),
-    );
+    ));
   }
+  await db.batch(writes as [typeof writes[number], ...typeof writes]);
 
   await recordAudit(actor, {
     action: "Semantic connector activated",
@@ -587,8 +597,9 @@ function mapSavedWorkspace(
     title: row.title,
     prompt: row.prompt,
     savedAt: row.createdAt,
-    data: parseJson<DynamicWorkspaceResponse | null>(row.workspaceJson, null),
+    data: null,
     pinned: row.pinned,
+    shared:row.shared,
   };
 }
 
@@ -707,16 +718,6 @@ async function seedOrganization(
   }
 }
 
-function decodeUserName(request: Request) {
-  const encoded = request.headers.get("oai-authenticated-user-full-name");
-  if (!encoded) return null;
-  try {
-    return decodeURIComponent(encoded);
-  } catch {
-    return null;
-  }
-}
-
 function parseJson<T>(value: string | null, fallback: T): T {
   if (!value) return fallback;
   try {
@@ -726,16 +727,21 @@ function parseJson<T>(value: string | null, fallback: T): T {
   }
 }
 
-function sanitizeWorkspace(response: DynamicWorkspaceResponse): DynamicWorkspaceResponse {
-  return {
-    ...response,
-    spec: {
-      ...response.spec,
-      blocks: response.spec.blocks.map((block) =>
-        block.type === "table"
-          ? { ...block, rows: [], totalRows: response.safety.returnedRows }
-          : block,
-      ),
-    },
-  };
+export async function updateWorkspace(actor:AppActor,id:string,changes:{title?:string;pinned?:boolean;shared?:boolean;delete?:boolean}) {
+  assertRole(actor.role,'member');
+  const db = getAppStateDb();
+  const owned = and(eq(schema.savedWorkspaces.id,id),eq(schema.savedWorkspaces.organizationId,actor.organizationId),eq(schema.savedWorkspaces.ownerUserId,actor.id));
+  const existing = await db.query.savedWorkspaces.findFirst({where:owned});
+  if (!existing) throw new SecurityError(404,'workspace_not_found','Workspace not found or not owned by you.');
+  if (changes.delete) await db.delete(schema.savedWorkspaces).where(owned);
+  else await db.update(schema.savedWorkspaces).set({title:changes.title??existing.title,pinned:changes.pinned??existing.pinned,shared:changes.shared??existing.shared,updatedAt:new Date().toISOString()}).where(owned);
+  await recordAudit(actor,{action:changes.delete?'Workspace deleted':'Workspace updated',target:id,outcome:'success',requestId:crypto.randomUUID(),details:{shared:changes.shared,pinned:changes.pinned}});
+}
+
+export async function activeConnectorFor(actor:AppActor) {
+  const db=getAppStateDb();
+  const connector = await db.query.dataConnectors.findFirst({where:and(eq(schema.dataConnectors.organizationId,actor.organizationId),eq(schema.dataConnectors.status,'healthy')),orderBy:[desc(schema.dataConnectors.updatedAt)]});
+  if (!connector) throw new SecurityError(409,'connector_required','An administrator must activate a connector first.');
+  const permissions = await db.query.connectorPermissions.findMany({where:and(eq(schema.connectorPermissions.connectorId,connector.id),eq(schema.connectorPermissions.enabled,true))});
+  return {connector,entities:permissions.map(p=>p.tableName)};
 }

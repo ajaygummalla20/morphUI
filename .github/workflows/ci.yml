@@ -1,0 +1,50 @@
+name: Validate MorphUI
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: validate-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            gateway/package-lock.json
+      - run: npm ci --ignore-scripts
+      - run: npm ci --prefix gateway --ignore-scripts
+      - run: npm run check
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: morphui-build
+          path: dist/
+          retention-days: 7
+  postgres-and-container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - run: npm ci --ignore-scripts
+      - run: npm ci --prefix gateway --ignore-scripts
+      - run: cp .env.example .env
+      - run: npm run db:setup
+      - run: npm run gateway:up
+      - run: npm run gateway:smoke
+        env:
+          MORPH_SMOKE_DATABASE_URL: postgresql://morph_gateway_reader:morph_gateway_dev@127.0.0.1:5434/morphui
+      - if: always()
+        run: docker compose down --volumes

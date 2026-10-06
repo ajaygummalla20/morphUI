@@ -89,7 +89,7 @@ export const semanticEntitySchema = z
     statusField: z.string().regex(/^[a-z0-9_]+$/).nullable(),
     maximumRows: z.number().int().min(1).max(200),
     accessMode: z.literal("read_only"),
-    schemaVerified: z.literal(true),
+    schemaVerified: z.boolean(),
     fields: z.array(semanticFieldSchema).min(1).max(40),
     metrics: z.array(semanticMetricSchema).min(1).max(12),
   })

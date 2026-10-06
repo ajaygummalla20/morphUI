@@ -1,9 +1,12 @@
 import { getGatewayHealth } from "@/lib/gateway/client";
+import { guardRequest } from '@/lib/auth/session';
+import { securityResponse } from '@/lib/server/security';
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(request:Request) {
   try {
+    await guardRequest(request,'health','admin',30);
     return Response.json(await getGatewayHealth(), {
       headers: {
         "Cache-Control": "no-store",
@@ -11,7 +14,7 @@ export async function GET() {
       },
     });
   } catch (error) {
-    console.error("Gateway health check failed", error);
+    const denied=securityResponse(error); if (denied) return denied;
     return Response.json(
       {
         status: "unavailable",

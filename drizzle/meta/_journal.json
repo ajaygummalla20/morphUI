@@ -15,6 +15,13 @@
       "when": 1788288374357,
       "tag": "0001_free_alice",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1791272969917,
+      "tag": "0002_wide_barracuda",
+      "breakpoints": true
     }
   ]
 }

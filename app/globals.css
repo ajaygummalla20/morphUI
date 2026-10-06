@@ -1443,3 +1443,20 @@ kbd { min-width: 20px; display: inline-grid; place-items: center; padding: 3px 5
   font-size: .875rem;
   line-height: 1.6;
 }
+.session-bar { display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:1rem; padding:.5rem 1.5rem; background:#141a0e; color:#f5f7ef; font-size:.75rem; }
+.session-bar button { border:1px solid #849b65; border-radius:.5rem; padding:.35rem .75rem; }
+.auth-page { min-height:100dvh; display:grid; place-items:center; padding:1.5rem; background:#f1f2eb; }
+.auth-card { width:min(100%,32rem); background:white; border:1px solid #d9dfcf; border-radius:1.25rem; padding:2rem; }
+.auth-card h1 { font-size:2rem; line-height:1.2; margin:1rem 0; }
+.auth-card p { margin:1.5rem 0; }
+.saved-workspaces { margin-bottom:1rem; padding:1rem; border:1px solid #d9dfcf; border-radius:1rem; background:#fff; }
+.saved-workspaces summary { cursor:pointer; font-weight:600; }
+.saved-workspaces p { margin:.75rem 0; font-size:.8rem; color:#59634e; }
+.saved-workspaces ul { list-style:none; padding:0; }
+.saved-workspaces li { padding:.75rem 0; border-top:1px solid #e7ebdf; }
+.saved-workspaces form { display:flex; flex-wrap:wrap; gap:.5rem; margin-top:.5rem; }
+.saved-workspaces input { min-width:0; width:min(100%,16rem); border:1px solid #b9c3ab; border-radius:.5rem; padding:.5rem; }
+.saved-workspaces button { border:1px solid #b9c3ab; border-radius:.5rem; padding:.5rem .75rem; font-size:.8rem; }
+.saved-workspaces .saved-open { font-weight:600; background:#f1f7e8; }
+.saved-workspaces button:disabled { opacity:.5; cursor:wait; }
+button:focus-visible,a:focus-visible,input:focus-visible,summary:focus-visible { outline:2px solid #577d20; outline-offset:3px; }

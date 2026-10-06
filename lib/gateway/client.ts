@@ -45,15 +45,18 @@ export type GatewayCatalogExecution = {
 };
 
 export async function discoverGatewayCatalog(options: {
-  identity: GatewayIdentity;
+  identity: GatewayIdentity | ((requestId:string)=>Promise<GatewayIdentity>);
   connectorId?: string;
+  purpose?:'runtime'|'onboarding';
 }): Promise<GatewayCatalogExecution> {
+  const requestId=crypto.randomUUID();
   const request = gatewayCatalogRequestSchema.parse({
     protocolVersion: GATEWAY_PROTOCOL_VERSION,
-    requestId: crypto.randomUUID(),
+    requestId,
     connectorId:
       options.connectorId ?? "connector_production_postgresql",
-    identity: options.identity,
+    identity: typeof options.identity === 'function' ? await options.identity(requestId) : options.identity,
+    purpose:options.purpose??'onboarding',
   } satisfies GatewayCatalogRequest);
   const gatewayUrl = process.env.MORPH_GATEWAY_URL?.trim();
   const result = gatewayUrl
@@ -80,15 +83,16 @@ export async function executeWorkspaceGateway(options: {
   plan: WorkspacePlan;
   queryPlan: GatewayQueryPlan;
   catalogEntity: SemanticEntity;
-  identity: GatewayIdentity;
+  identity: GatewayIdentity | ((requestId:string)=>Promise<GatewayIdentity>);
   connectorId?: string;
 }): Promise<WorkspaceGatewayExecution> {
+  const requestId=crypto.randomUUID();
   const request = gatewayExecuteRequestSchema.parse({
     protocolVersion: GATEWAY_PROTOCOL_VERSION,
-    requestId: crypto.randomUUID(),
+    requestId,
     connectorId:
       options.connectorId ?? "connector_production_postgresql",
-    identity: options.identity,
+    identity: typeof options.identity === 'function' ? await options.identity(requestId) : options.identity,
     plan: options.queryPlan,
   } satisfies GatewayExecuteRequest);
 

@@ -39,7 +39,7 @@ export const appUsers = sqliteTable(
     fullName: text("full_name").notNull(),
     role: text("role", { enum: ["admin", "member", "viewer"] })
       .notNull()
-      .default("admin"),
+      .default("admin"), // Legacy column default; production identity provisioning always sets the mapped role explicitly.
     ...timestamps,
   },
   (table) => [
@@ -261,6 +261,7 @@ export const savedWorkspaces = sqliteTable(
     sourceMode: text("source_mode"),
     workspaceJson: text("workspace_json"),
     pinned: integer("pinned", { mode: "boolean" }).notNull().default(false),
+    shared: integer("shared", { mode: "boolean" }).notNull().default(false),
     lastOpenedAt: text("last_opened_at"),
     ...timestamps,
   },
@@ -341,3 +342,15 @@ export const auditEvents = sqliteTable(
     ),
   ],
 );
+
+export const authFlows = sqliteTable('auth_flows', {
+  stateHash:text('state_hash').primaryKey(), bindingHash:text('binding_hash').notNull(),
+  verifier:text('verifier').notNull(), nonce:text('nonce').notNull(), expiresAt:integer('expires_at').notNull(),
+});
+export const authSessions = sqliteTable('auth_sessions', {
+  tokenHash:text('token_hash').primaryKey(), userId:text('user_id').notNull().references(()=>appUsers.id,{onDelete:'cascade'}),
+  issuer:text('issuer').notNull(),subject:text('subject').notNull(),organizationId:text('organization_id').notNull().references(()=>organizations.id,{onDelete:'cascade'}),expiresAt:integer('expires_at').notNull(),
+});
+export const requestLimits = sqliteTable('request_limits', {
+  id:text('id').primaryKey(),hits:integer('hits').notNull(),expiresAt:integer('expires_at').notNull(),
+});

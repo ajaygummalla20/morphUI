@@ -118,6 +118,7 @@ export function createOidcIdentityVerifier(
     const timeout = setTimeout(() => controller.abort(), 5_000);
     try {
       const response = await fetchJwks(config.jwksUrl, {
+        redirect:'error',
         headers: { Accept: "application/json" },
         signal: controller.signal,
       });
@@ -222,6 +223,7 @@ export function createOidcIdentityVerifier(
       );
     }
     if (claims.org_id !== context.organizationId) throw invalidAssertion();
+    if (claims.request_id !== undefined && claims.request_id !== context.requestId) throw invalidAssertion();
     purgeExpiredAssertions(usedAssertions, currentSeconds);
     const replayKey = `${claims.iss}:${claims.jti}`;
     if ((usedAssertions.get(replayKey) ?? 0) > currentSeconds) {
@@ -230,12 +232,8 @@ export function createOidcIdentityVerifier(
         "The client identity assertion has already been used.",
       );
     }
-    while (usedAssertions.size >= 10_000) {
-      const oldest = usedAssertions.keys().next().value;
-      if (typeof oldest !== "string") break;
-      usedAssertions.delete(oldest);
-    }
-    usedAssertions.set(replayKey, claims.exp);
+    if (usedAssertions.size >= 10_000) throw new IdentityVerificationError('identity_not_verified','Identity verification is at capacity. Retry shortly.');
+    usedAssertions.set(replayKey, claims.exp + tolerance);
 
     return {
       organizationId: claims.org_id,

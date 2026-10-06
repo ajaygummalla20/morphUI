@@ -5,13 +5,17 @@ import {
   ensureAppActor,
   loadAppState,
   recordAudit,
-  recordWorkspaceRun,
   replaceRules,
   savePreferences,
   saveWorkspace,
   setConnectorPermissions,
+  updateWorkspace,
 } from "@/db/app-state";
 import { semanticCatalogSchema } from "@/lib/catalog/semantic";
+import { guardRequest } from '@/lib/auth/session';
+import { gatewayIdentityFor } from '@/lib/auth/gateway';
+import { discoverGatewayCatalog } from '@/lib/gateway/client';
+import { securityResponse,readJsonLimited,assertRole,SecurityError } from '@/lib/server/security';
 
 export const dynamic = "force-dynamic";
 
@@ -46,6 +50,7 @@ const connectorSchema = z.object({
 });
 
 const actionSchema = z.discriminatedUnion("action", [
+  z.object({action:z.literal('update_workspace'),id:z.string().uuid(),title:z.string().trim().min(1).max(160).optional(),pinned:z.boolean().optional(),shared:z.boolean().optional(),delete:z.boolean().optional()}),
   z.object({ action: z.literal("save_workspace"), workspace: savedWorkspaceSchema }),
   z.object({ action: z.literal("replace_rules"), rules: z.array(accessRuleSchema).max(100) }),
   z.object({ action: z.literal("add_connector"), connector: connectorSchema }),
@@ -88,12 +93,13 @@ const actionSchema = z.discriminatedUnion("action", [
 
 export async function GET(request: Request) {
   try {
+    await guardRequest(request,'state_read');
     const actor = await ensureAppActor(request);
     return Response.json(await loadAppState(actor), {
       headers: { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" },
     });
   } catch (error) {
-    console.error("App state bootstrap failed", error);
+    const denied=securityResponse(error); if (denied) return denied;
     return Response.json(
       { error: "Persistent application state is temporarily unavailable." },
       { status: 503 },
@@ -103,36 +109,42 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
+    const session = await guardRequest(request,'state_write');
     const actor = await ensureAppActor(request);
-    const input = actionSchema.parse(await request.json());
+    const input = actionSchema.parse(await readJsonLimited(request,262_144));
+    if (input.action !== 'save_preferences') assertRole(actor.role,'member');
+    if (['replace_rules','add_connector','activate_connector','set_connector_permissions'].includes(input.action)) assertRole(actor.role,'admin');
 
     if (input.action === "save_workspace") {
-      await saveWorkspace(actor, input.workspace as Parameters<typeof saveWorkspace>[1]);
+      await saveWorkspace(actor, {...input.workspace,data:null});
+    } else if (input.action === 'update_workspace') {
+      await updateWorkspace(actor,input.id,input);
     } else if (input.action === "replace_rules") {
       await replaceRules(actor, input.rules);
     } else if (input.action === "add_connector") {
       await addConnector(actor, input.connector);
     } else if (input.action === "activate_connector") {
-      await activateConnector(actor, input);
+      const verified = await discoverGatewayCatalog({identity:gatewayIdentityFor(session),connectorId:process.env.MORPH_GATEWAY_CONNECTOR_ID});
+      await activateConnector(actor, {...input,connector:{...input.connector,status:'healthy',lastCheckedAt:new Date().toISOString()},catalog:verified.catalog,policyVersion:verified.catalog.policyVersion});
     } else if (input.action === "set_connector_permissions") {
       await setConnectorPermissions(actor, input.connectorId, input.tables);
     } else if (input.action === "save_preferences") {
       await savePreferences(actor, input);
     } else if (input.action === "record_workspace_run") {
-      await recordWorkspaceRun(actor, input as Parameters<typeof recordWorkspaceRun>[1]);
+      throw new SecurityError(403,'server_audit_only','Workspace executions are recorded by the server.');
     } else if (input.action === "record_audit") {
-      await recordAudit(actor, input.event);
+      await recordAudit(actor, {...input.event,action:'Client interaction',outcome:'success',details:{clientAction:input.event.action}});
     }
 
     return Response.json({ ok: true }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
+    const denied=securityResponse(error); if (denied) return denied;
     if (error instanceof ZodError || error instanceof SyntaxError) {
       return Response.json(
         { error: "The persistence request is invalid." },
         { status: 400 },
       );
     }
-    console.error("App state mutation failed", error);
     return Response.json(
       { error: "The change could not be saved. No partial confirmation was returned." },
       { status: 503 },

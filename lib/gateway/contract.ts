@@ -67,6 +67,7 @@ export const gatewayCatalogRequestSchema = z
     requestId: z.string().uuid(),
     connectorId: z.string().min(3).max(100),
     identity: gatewayIdentitySchema,
+    purpose:z.enum(['onboarding','runtime']).optional(),
   })
   .strict();
 

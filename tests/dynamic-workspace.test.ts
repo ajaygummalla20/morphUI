@@ -57,7 +57,7 @@ test("presentation instructions control the generated block types", async () => 
   const response = await POST(
     new Request("http://localhost/api/workspaces/generate", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", Origin:"http://localhost" },
       body: JSON.stringify({ prompt, limit: 200 }),
     }),
   );
@@ -168,7 +168,7 @@ test("the API returns a different validated UI specification per request", async
         const response = await POST(
           new Request("http://localhost/api/workspaces/generate", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { "Content-Type": "application/json", Origin:"http://localhost" },
             body: JSON.stringify({ prompt, limit: 200 }),
           }),
         );
@@ -212,7 +212,7 @@ test("the API rejects invalid and unsupported input without querying data", asyn
   const invalidResponse = await POST(
     new Request("http://localhost/api/workspaces/generate", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", Origin:"http://localhost" },
       body: JSON.stringify({ prompt: "short" }),
     }),
   );
@@ -221,7 +221,7 @@ test("the API rejects invalid and unsupported input without querying data", asyn
   const unsupportedResponse = await POST(
     new Request("http://localhost/api/workspaces/generate", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", Origin:"http://localhost" },
       body: JSON.stringify({ prompt: "Build a payroll workspace for contractors" }),
     }),
   );
@@ -241,7 +241,7 @@ test("a database URL cannot bypass the client Gateway boundary", async () => {
     const response = await POST(
       new Request("http://localhost/api/workspaces/generate", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Origin:"http://localhost" },
         body: JSON.stringify({
           prompt: "Show the active policy portfolio by product",
           limit: 20,
@@ -255,6 +255,7 @@ test("a database URL cannot bypass the client Gateway boundary", async () => {
   } finally {
     if (previousDatabaseUrl === undefined) delete process.env.DATABASE_URL;
     else process.env.DATABASE_URL = previousDatabaseUrl;
+    process.env.MORPH_AUTH_MODE="demo";
     if (previousGatewayUrl === undefined) delete process.env.MORPH_GATEWAY_URL;
     else process.env.MORPH_GATEWAY_URL = previousGatewayUrl;
   }
@@ -263,22 +264,24 @@ test("a database URL cannot bypass the client Gateway boundary", async () => {
 test("a configured client Gateway fails closed without a signed identity assertion", async () => {
   const previousGatewayUrl = process.env.MORPH_GATEWAY_URL;
   process.env.MORPH_GATEWAY_URL = "https://gateway.atlas.example";
+  process.env.MORPH_AUTH_MODE="oidc";
 
   try {
     const response = await POST(
       new Request("http://localhost/api/workspaces/generate", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Origin:"http://localhost" },
         body: JSON.stringify({
           prompt: "Show high-value claims reported this month by branch",
           limit: 20,
         }),
       }),
     );
-    assert.equal(response.status, 401);
+    assert.equal(response.status, 403);
     const payload = await response.json();
-    assert.equal(payload.code, "client_identity_required");
+    assert.equal(payload.code, "invalid_origin");
   } finally {
+    process.env.MORPH_AUTH_MODE="demo";
     if (previousGatewayUrl === undefined) delete process.env.MORPH_GATEWAY_URL;
     else process.env.MORPH_GATEWAY_URL = previousGatewayUrl;
   }

@@ -13,11 +13,20 @@ client-hosted Morph Gateway.
 ## Start the web app
 
 ```bash
-npm install
+npm ci --ignore-scripts
+cp .env.example .env
+npm run app:db:migrate:local
 npm run dev
 ```
 
 The terminal prints the local address for the application.
+
+Current pilot setup, authentication, Gateway identity bridge, GitHub deployment
+and remaining activation requirements are documented in
+[docs/pilot-setup.md](docs/pilot-setup.md). Run `npm run check` before pushing.
+Saved views store definitions only and reopen through fresh permission checks.
+See [docs/dependency-audit.md](docs/dependency-audit.md) for the scoped tooling
+audit exception and its expiry.
 
 ## Create the reference PostgreSQL database
 

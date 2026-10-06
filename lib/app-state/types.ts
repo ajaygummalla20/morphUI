@@ -8,6 +8,8 @@ export type SavedWorkspaceRecord = {
   savedAt: string;
   data: DynamicWorkspaceResponse | null;
   pinned: boolean;
+  shared?:boolean;
+  canEdit?:boolean;
 };
 
 export type AccessRuleRecord = {
@@ -68,6 +70,7 @@ export type AppStateBootstrap = {
 };
 
 export type AppStateAction =
+  | {action:'update_workspace'; id:string; title?:string;pinned?:boolean;shared?:boolean;delete?:boolean}
   | {
       action: "save_workspace";
       workspace: SavedWorkspaceRecord;

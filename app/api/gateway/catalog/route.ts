@@ -3,15 +3,19 @@ import {
   GatewayIdentityRequiredError,
   GatewayProtocolError,
   discoverGatewayCatalog,
-  gatewayIdentityFromRequest,
 } from "@/lib/gateway/client";
+import { guardRequest } from '@/lib/auth/session';
+import { gatewayIdentityFor } from '@/lib/auth/gateway';
+import { securityResponse } from '@/lib/server/security';
 
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
   try {
+    const actor = await guardRequest(request,'catalog','admin',12);
     const execution = await discoverGatewayCatalog({
-      identity: gatewayIdentityFromRequest(request),
+      identity: gatewayIdentityFor(actor),
+      connectorId:process.env.MORPH_GATEWAY_CONNECTOR_ID,
     });
     return Response.json(
       {
@@ -29,6 +33,7 @@ export async function POST(request: Request) {
       },
     );
   } catch (error) {
+    const denied = securityResponse(error); if (denied) return denied;
     if (error instanceof GatewayIdentityRequiredError) {
       return Response.json(
         { error: error.message, code: "client_identity_required" },
@@ -61,7 +66,6 @@ export async function POST(request: Request) {
         { status: 502, headers: { "Cache-Control": "no-store" } },
       );
     }
-    console.error("Gateway catalog discovery failed", error);
     return Response.json(
       {
         error:

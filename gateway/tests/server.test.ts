@@ -222,3 +222,62 @@ test("an unverified identity is denied before database execution", async () => {
     );
   }
 });
+
+test("member catalog access separates runtime metadata from administrator onboarding", async (t) => {
+  const databaseQueries: string[] = [];
+  const server = createGatewayServer({
+    config,
+    policy,
+    execute: async (query) => {
+      databaseQueries.push(query.text);
+      return [];
+    },
+    verifyIdentity: async () => ({
+      organizationId: policy.organizationId,
+      subjectId: "subject-operations-member",
+      email: "member@atlas.example",
+      identityProvider: "oidc",
+      issuer: config.identity.issuer,
+      expiresAt: new Date(Date.now() + 300_000).toISOString(),
+      jti: crypto.randomUUID(),
+    }),
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = (server.address() as AddressInfo).port;
+  const discover = (purpose: "runtime" | "onboarding") => fetch(`http://127.0.0.1:${port}/v1/catalog/discover`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      protocolVersion: "1.2", requestId: crypto.randomUUID(), connectorId: policy.connectorId,
+      purpose,
+      identity: {
+        organizationId: policy.organizationId,
+        assertion: "verified-member-identity-assertion-long-enough-for-contract",
+      },
+    } satisfies GatewayCatalogRequest),
+  });
+  try {
+    await t.test("a member cannot onboard connectors or cause schema probes", async () => {
+      const onboarding = await discover("onboarding");
+      assert.equal(onboarding.status, 403);
+      const denial = await onboarding.json();
+      assert.equal(denial.decision, "deny");
+      assert.equal(denial.reasonCode, "onboarding_not_allowed");
+      assert.deepEqual(databaseQueries, [], "denied onboarding must not execute database probes");
+    });
+
+    await t.test("runtime catalog includes only the member's allowed entities without schema probes", async () => {
+      const response = await discover("runtime");
+      assert.equal(response.status, 200);
+      const catalog = await response.json();
+      assert.equal(catalog.decision, "allow");
+      assert.deepEqual(catalog.entities.map((entity: { entity: string }) => entity.entity), ["policies", "endorsements"]);
+      assert.ok(catalog.entities.every((entity: { schemaVerified: boolean }) => entity.schemaVerified === false));
+      const allowed = new Set(["policies", "endorsements"]);
+      assert.ok(catalog.relationships.every((relationship: { fromEntity: string; toEntity: string }) => allowed.has(relationship.fromEntity) && allowed.has(relationship.toEntity)));
+      assert.deepEqual(databaseQueries, [], "runtime metadata discovery must not probe database schemas");
+    });
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});

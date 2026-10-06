@@ -65,6 +65,8 @@ import type {
 import type { GatewayCatalogResponse } from "@/lib/gateway/contract";
 import type { SemanticCatalog } from "@/lib/catalog/semantic";
 import { escapeCsv } from "@/lib/workspaces/export";
+import { SessionGate, authenticatedFetch } from './components/session-gate';
+import { SavedWorkspaces } from './components/saved-workspaces';
 
 type SectionId = "workspaces" | "sources" | "rules" | "audit";
 type GenerationPhase = "ready" | "understanding" | "checking" | "building";
@@ -86,192 +88,29 @@ const navItems = [
   { id: "audit" as const, label: "Audit log", icon: FileClock },
 ];
 
-const SAVED_WORKSPACES_KEY = "morphui.saved-workspaces.v1";
-const ACCESS_RULES_KEY = "morphui.access-rules.v1";
-const DRAFT_SOURCES_KEY = "morphui.draft-sources.v1";
-const APPROVED_TABLES_KEY = "morphui.approved-tables.v1";
-const EMAIL_ALERTS_KEY = "morphui.email-alerts.v1";
-
 const defaultConnector: ConnectorRecord = {
   id: "connector_production_postgresql",
-  name: "Production PostgreSQL",
+  name: "No active connector",
   engine: "PostgreSQL",
   host: "customer-network",
   databaseName: "insurance_operations",
   region: "Mumbai",
-  status: "healthy",
+  status: "draft",
   lastCheckedAt: null,
 };
 
-const defaultAccessRules: AccessRule[] = [
-  {
-    id: "policy-operations",
-    name: "Policy operations",
-    scope: "motor_policies",
-    fields: "8 fields",
-    mode: "Read only",
-    users: "Operations team",
-    enabled: true,
-  },
-  {
-    id: "claims-overview",
-    name: "Claims overview",
-    scope: "claims_summary",
-    fields: "6 fields",
-    mode: "Read only",
-    users: "Claims managers",
-    enabled: true,
-  },
-  {
-    id: "customer-service",
-    name: "Customer service",
-    scope: "service_requests",
-    fields: "11 fields",
-    mode: "Read only",
-    users: "Support leads",
-    enabled: true,
-  },
-];
-
 const initialWorkspaceSpec: WorkspaceSpec = {
-  title: "Motor renewals — next 15 days",
-  description: "Policies above ₹20K, grouped by relationship manager",
-  source: "Production PostgreSQL",
-  generatedIn: "2.4s",
-  blocks: [
-    {
-      type: "metrics",
-      items: [
-        {
-          label: "Renewals due",
-          value: "24",
-          delta: "+6 this week",
-          tone: "lime",
-        },
-        {
-          label: "Premium at risk",
-          value: "₹7.84L",
-          delta: "Across 18 accounts",
-          tone: "orange",
-        },
-        {
-          label: "High priority",
-          value: "6",
-          delta: "Needs action today",
-          tone: "blue",
-        },
-      ],
-    },
-    {
-      type: "trend",
-      title: "Renewal value by day",
-      subtitle: "Aug 09 — Aug 24",
-      values: [18, 28, 23, 42, 34, 52, 47, 68, 61, 83, 72, 91],
-      total: "₹7.84L",
-      labels: ["Aug 09", "Aug 16", "Aug 24"],
-      axisLabels: ["High", "Mid", "Low"],
-    },
-    {
-      type: "table",
-      title: "Policies requiring attention",
-      emptyMessage:
-        "No renewals match this request. Try a longer date range or lower premium.",
-      columns: [
-        { key: "policy", label: "Policy", format: "id" },
-        { key: "customer", label: "Customer" },
-        { key: "expiry", label: "Expiry", format: "date" },
-        { key: "premium", label: "Premium", format: "currency" },
-        { key: "manager", label: "RM", format: "person" },
-        { key: "priority", label: "Priority", format: "badge" },
-      ],
-      totalRows: 24,
-      rows: [
-        {
-          policy: "MTR-48291",
-          customer: "Aarav Logistics",
-          expiry: "12 Aug 2026",
-          premium: 86400,
-          manager: "Neha Rao",
-          priority: "High",
-        },
-        {
-          policy: "MTR-39104",
-          customer: "Meridian Foods",
-          expiry: "14 Aug 2026",
-          premium: 62900,
-          manager: "Arjun Mehta",
-          priority: "High",
-        },
-        {
-          policy: "MTR-51028",
-          customer: "Northstar Retail",
-          expiry: "17 Aug 2026",
-          premium: 41250,
-          manager: "Neha Rao",
-          priority: "Medium",
-        },
-        {
-          policy: "MTR-28472",
-          customer: "Vega Components",
-          expiry: "21 Aug 2026",
-          premium: 28800,
-          manager: "Kabir Shah",
-          priority: "Standard",
-        },
-      ],
-    },
-  ],
+  title: "Describe your workspace", description: "Build a view from your approved data.",
+  source: "No response", generatedIn: "—", blocks: [],
 };
 
-const initialQueryPlan = `{
-  "source": "policies_read_replica",
-  "operation": "select",
-  "entity": "motor_policies",
-  "fields": [
-    "policy_no", "customer_name", "expiry_date",
-    "premium", "relationship_manager", "priority"
-  ],
-  "filters": [
-    { "field": "expiry_date", "op": "within_days", "value": 15 },
-    { "field": "premium", "op": "greater_than", "value": 20000 }
-  ],
-  "row_limit": 200
-}`;
-
-const auditEvents = [
-  {
-    action: "Workspace generated",
-    actor: "You",
-    target: "Motor renewals — next 15 days",
-    time: "Just now",
-    icon: WandSparkles,
-  },
-  {
-    action: "Policy check passed",
-    actor: "Morph Gateway",
-    target: "6 allowed fields · read-only",
-    time: "Just now",
-    icon: ShieldCheck,
-  },
-  {
-    action: "Schema permission updated",
-    actor: "Priya S.",
-    target: "motor_policies.priority enabled",
-    time: "Yesterday, 4:18 PM",
-    icon: KeyRound,
-  },
-  {
-    action: "Data source health check",
-    actor: "Morph Gateway",
-    target: "Production PostgreSQL",
-    time: "Yesterday, 2:06 PM",
-    icon: Database,
-  },
-];
+const initialQueryPlan = "No validated plan yet.";
 
 const spring = { type: "spring" as const, stiffness: 360, damping: 32 };
 
-export default function Home() {
+export default function Home() {return <SessionGate><WorkspaceApp /></SessionGate>;}
+
+function WorkspaceApp() {
   const [section, setSection] = useState<SectionId>("workspaces");
   const [phase, setPhase] = useState<GenerationPhase>("ready");
   const [prompt, setPrompt] = useState(
@@ -282,28 +121,13 @@ export default function Home() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [overlay, setOverlay] = useState<AppOverlay>(null);
-  const [unreadNotifications, setUnreadNotifications] = useState(2);
-  const [savedWorkspaces, setSavedWorkspaces] = useState<SavedWorkspace[]>(() =>
-    readLocalArray<SavedWorkspace>(SAVED_WORKSPACES_KEY),
-  );
-  const [accessRules, setAccessRules] = useState<AccessRule[]>(() => {
-    const stored = readLocalArray<AccessRule>(ACCESS_RULES_KEY);
-    return stored.length ? stored : defaultAccessRules;
-  });
-  const [connectors, setConnectors] = useState<ConnectorRecord[]>(() => [
-    defaultConnector,
-    ...readLocalArray<Partial<ConnectorRecord>>(DRAFT_SOURCES_KEY).map(
-      normalizeLocalConnector,
-    ),
-  ]);
-  const [approvedTables, setApprovedTables] = useState<string[]>(() => {
-    const stored = readLocalArray<string>(APPROVED_TABLES_KEY);
-    return stored.length ? stored : ["policies", "claims", "renewals"];
-  });
+  const [unreadNotifications, setUnreadNotifications] = useState(0);
+  const [savedWorkspaces, setSavedWorkspaces] = useState<SavedWorkspace[]>([]);
+  const [accessRules, setAccessRules] = useState<AccessRule[]>([]);
+  const [connectors, setConnectors] = useState<ConnectorRecord[]>([]);
+  const [approvedTables, setApprovedTables] = useState<string[]>([]);
   const [auditRecords, setAuditRecords] = useState<AuditEventRecord[]>([]);
-  const [emailAlerts, setEmailAlerts] = useState(() =>
-    readLocalBoolean(EMAIL_ALERTS_KEY, true),
-  );
+  const [emailAlerts, setEmailAlerts] = useState(true);
   const [activeUser, setActiveUser] = useState<AppStateBootstrap["user"]>({
     id: "local-user",
     email: "kiran@atlas.example",
@@ -312,11 +136,14 @@ export default function Home() {
   });
   const [persistenceMode, setPersistenceMode] =
     useState<PersistenceMode>("connecting");
+  const [organizationName,setOrganizationName]=useState("Your organization");
   const [workspaceData, setWorkspaceData] =
     useState<DynamicWorkspaceResponse | null>(null);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [workspaceLoading, setWorkspaceLoading] = useState(true);
   const assemblyRef = useRef<HTMLDivElement>(null);
+  const requestSequence=useRef(0);
+  const requestController=useRef<AbortController|null>(null);
   const reduceMotion = useReducedMotion();
 
   const workspaceSpec = workspaceData?.spec ?? initialWorkspaceSpec;
@@ -364,8 +191,10 @@ export default function Home() {
         setConnectors(state.connectors);
         setApprovedTables(state.approvedTables);
         setAuditRecords(state.auditEvents);
+        setUnreadNotifications(state.auditEvents.length);
         setEmailAlerts(state.preferences.emailSafetyAlerts);
         setActiveUser(state.user);
+        setOrganizationName(state.organization.name);
         setPersistenceMode("cloud");
       })
       .catch(() => {
@@ -380,28 +209,32 @@ export default function Home() {
   useEffect(() => {
     let cancelled = false;
 
+    const sequence=++requestSequence.current;
+    const controller=new AbortController();requestController.current=controller;
     requestDynamicWorkspace(
       "Show motor policies expiring in the next 15 days with premium above ₹20,000, grouped by relationship manager.",
+      controller.signal,
     )
       .then((response) => {
-        if (!cancelled) {
+        if (!cancelled && sequence===requestSequence.current) {
           setWorkspaceData(response);
           setWorkspaceError(null);
         }
       })
       .catch(() => {
-        if (!cancelled) {
+        if (!cancelled && sequence===requestSequence.current) {
           setWorkspaceError(
-            "The data API could not be reached. The last safe workspace is still shown.",
+            "No workspace response is available. Build a workspace or check your connector.",
           );
         }
       })
       .finally(() => {
-        if (!cancelled) setWorkspaceLoading(false);
+        if (!cancelled && sequence===requestSequence.current) setWorkspaceLoading(false);
       });
 
     return () => {
       cancelled = true;
+      controller.abort();
     };
   }, []);
 
@@ -425,73 +258,59 @@ export default function Home() {
 
   const persistAction = async (
     action: AppStateAction,
-    writeDeviceFallback: () => void,
   ) => {
     try {
       await requestAppStateMutation(action);
       setPersistenceMode("cloud");
       return true;
     } catch {
-      writeDeviceFallback();
+      setToast("Change not saved. Check your connection or permissions and retry.");
       setPersistenceMode("device");
+      try {
+        const state=await requestAppStateBootstrap();
+        setSavedWorkspaces(state.savedWorkspaces);setAccessRules(state.accessRules);setConnectors(state.connectors);setApprovedTables(state.approvedTables);setEmailAlerts(state.preferences.emailSafetyAlerts);
+      } catch { /* The displayed failure remains explicit until retry. */ }
       return false;
     }
   };
 
   const generateWorkspace = async () => {
     if (phase !== "ready") return;
-    const startedAt = performance.now();
     setSaved(false);
     setWorkspaceError(null);
     setWorkspaceLoading(true);
     setPhase("understanding");
-    const request = requestDynamicWorkspace(prompt);
-
+    requestController.current?.abort();
+    const sequence=++requestSequence.current;
+    const controller=new AbortController();requestController.current=controller;
     try {
-      await wait(reduceMotion ? 80 : 680);
+      const response = await requestDynamicWorkspace(prompt,controller.signal);
+      if(sequence!==requestSequence.current)return;
       setPhase("checking");
       await wait(reduceMotion ? 80 : 720);
-      const response = await request;
+      if(sequence!==requestSequence.current)return;
       setPhase("building");
       setWorkspaceData(response);
       await wait(reduceMotion ? 100 : 800);
+      if(sequence!==requestSequence.current)return;
       setPhase("ready");
-      void persistAction(
-        {
-          action: "record_workspace_run",
-          prompt,
-          response,
-          status: "succeeded",
-          durationMs: Math.round(performance.now() - startedAt),
-        },
-        () => undefined,
-      );
       setToast(
         response.sourceMode === "client_gateway"
           ? "Workspace rebuilt through the client Gateway"
           : "Workspace rebuilt through the secure demo Gateway",
       );
     } catch (error) {
+      if(sequence!==requestSequence.current)return;
       const message =
         error instanceof Error
           ? error.message
           : "We could not build this workspace. Your previous view was preserved.";
       setPhase("ready");
       setWorkspaceError(message);
-      void persistAction(
-        {
-          action: "record_workspace_run",
-          prompt,
-          response: null,
-          status: /not supported|denied|allowed/i.test(message) ? "denied" : "failed",
-          durationMs: Math.round(performance.now() - startedAt),
-          errorCode: "workspace_generation_error",
-        },
-        () => undefined,
-      );
+      setWorkspaceData(null);
       setToast("Workspace not changed — check the guided request");
     } finally {
-      setWorkspaceLoading(false);
+      if(sequence===requestSequence.current)setWorkspaceLoading(false);
     }
   };
 
@@ -514,36 +333,32 @@ export default function Home() {
       title: workspaceSpec.title,
       prompt,
       savedAt: new Date().toISOString(),
-      data: workspaceData,
+      data: null,
       pinned: false,
     };
     const next = [item, ...savedWorkspaces].slice(0, 12);
-    setSavedWorkspaces(next);
-    setSaved(true);
+
     const cloudSaved = await persistAction(
       { action: "save_workspace", workspace: item },
-      () => writeLocalArray(SAVED_WORKSPACES_KEY, next),
     );
+    if (cloudSaved) {setSavedWorkspaces(next);setSaved(true);}
     setToast(
       cloudSaved
         ? "Workspace saved to Morph cloud"
-        : "Cloud unavailable · workspace saved on this device",
+        : "Workspace was not saved. Please retry.",
     );
   };
 
   const updateAccessRules = (next: AccessRule[]) => {
-    setAccessRules(next);
     void persistAction(
       { action: "replace_rules", rules: next },
-      () => writeLocalArray(ACCESS_RULES_KEY, next),
-    );
+    ).then(saved=>{if(saved)setAccessRules(next);});
   };
 
   const saveApprovedTables = async (
     tables: string[],
     connectorId?: string,
   ) => {
-    setApprovedTables(tables);
     const primaryConnector =
       selectPrimaryConnector(connectors) ??
       defaultConnector;
@@ -553,12 +368,12 @@ export default function Home() {
         connectorId: connectorId ?? primaryConnector.id,
         tables,
       },
-      () => writeLocalArray(APPROVED_TABLES_KEY, tables),
     );
+    if(cloudSaved)setApprovedTables(tables);
     setToast(
       cloudSaved
         ? `Table access request saved · client Gateway approval required`
-        : `Table access request saved on this device · Gateway approval required`,
+        : `Dataset selection was not saved. Please retry.`,
     );
   };
 
@@ -569,8 +384,6 @@ export default function Home() {
     policyVersion: string,
   ) => {
     const next = [...connectors.filter((item) => item.id !== connector.id), connector];
-    setConnectors(next);
-    setApprovedTables(selectedEntities);
     const cloudSaved = await persistAction(
       {
         action: "activate_connector",
@@ -579,41 +392,44 @@ export default function Home() {
         selectedEntities,
         policyVersion,
       },
-      () => {
-        writeLocalArray(DRAFT_SOURCES_KEY, next.filter((item) => item.id !== defaultConnector.id));
-        writeLocalArray(APPROVED_TABLES_KEY, selectedEntities);
-      },
     );
+    if(cloudSaved){setConnectors(next);setApprovedTables(selectedEntities);}
+    else throw new Error('Connector activation was not saved. Please retry.');
     setToast(
       cloudSaved
         ? `Semantic catalogue ${catalog.catalogVersion} activated`
-        : "Cloud unavailable · connector definition saved on this device",
+        : "Connector activation was not saved. Please retry.",
     );
   };
 
   const saveProfilePreferences = async (nextEmailAlerts: boolean) => {
-    setEmailAlerts(nextEmailAlerts);
     const cloudSaved = await persistAction(
       {
         action: "save_preferences",
         emailSafetyAlerts: nextEmailAlerts,
         defaultSection: section,
       },
-      () => writeLocalBoolean(EMAIL_ALERTS_KEY, nextEmailAlerts),
     );
+    if(cloudSaved)setEmailAlerts(nextEmailAlerts);
     setToast(
       cloudSaved
         ? "Preferences saved to Morph cloud"
-        : "Cloud unavailable · preferences saved on this device",
+        : "Preferences were not saved. Please retry.",
     );
   };
 
   const openSavedWorkspace = (item: SavedWorkspace) => {
+    requestController.current?.abort();
+    const sequence=++requestSequence.current;
+    const controller=new AbortController();requestController.current=controller;
+    setPhase('ready');setWorkspaceError(null);
     setPrompt(item.prompt);
-    if (item.data) setWorkspaceData(item.data);
+    setWorkspaceData(null);
+    setWorkspaceLoading(true);
+    void requestDynamicWorkspace(item.prompt,controller.signal).then(data=>{if(sequence===requestSequence.current){setWorkspaceData(data);setWorkspaceError(null);}}).catch(error=>{if(sequence===requestSequence.current)setWorkspaceError(error instanceof Error?error.message:'Could not reopen workspace.');}).finally(()=>{if(sequence===requestSequence.current)setWorkspaceLoading(false);});
     setSaved(true);
     chooseSection("workspaces");
-    setToast(item.data ? `Restored ${item.title}` : "Saved prompt loaded");
+    setToast(`Fetching fresh data for ${item.title}`);
   };
 
   return (
@@ -661,7 +477,7 @@ export default function Home() {
           <div className="org-avatar">AI</div>
           <div>
             <span className="eyebrow">Workspace</span>
-            <strong>Atlas Insurance</strong>
+            <strong>{organizationName}</strong>
           </div>
           <ChevronDown size={15} />
         </button>
@@ -722,7 +538,7 @@ export default function Home() {
               <Menu size={19} />
             </button>
             <div>
-              <span className="eyebrow">Atlas Insurance / Operations</span>
+              <span className="eyebrow">{organizationName} / {activeUser.role}</span>
               <h1>{navItems.find((item) => item.id === section)?.label}</h1>
             </div>
           </div>
@@ -731,7 +547,7 @@ export default function Home() {
               {persistenceMode === "cloud" ? (
                 <><CheckCircle2 size={13} /> Cloud saved</>
               ) : persistenceMode === "device" ? (
-                <><Database size={13} /> Device fallback</>
+                <><Database size={13} /> Not saved</>
               ) : (
                 <><LoaderCircle size={13} className="spin" /> Connecting</>
               )}
@@ -757,6 +573,7 @@ export default function Home() {
             exit={reduceMotion ? undefined : { opacity: 0, y: -6 }}
             transition={{ duration: 0.24 }}
           >
+            {section === 'workspaces' && <SavedWorkspaces items={savedWorkspaces} onOpen={openSavedWorkspace} onRefresh={async()=>{const state=await requestAppStateBootstrap();setSavedWorkspaces(state.savedWorkspaces);}} />}
             {section === "workspaces" && (
               <WorkspaceView
                 prompt={prompt}
@@ -837,6 +654,8 @@ export default function Home() {
             unreadNotifications={unreadNotifications}
             persistenceMode={persistenceMode}
             activeUser={activeUser}
+            organizationName={organizationName}
+            auditRecords={auditRecords}
             emailAlerts={emailAlerts}
             onSavePreferences={saveProfilePreferences}
             onMarkNotificationsRead={() => {
@@ -931,7 +750,7 @@ function WorkspaceView({
                 {workspaceData?.spec.source ?? "policies_read_replica"}
                 <ChevronDown size={12} />
               </button>
-              <span><ShieldCheck size={13} /> {workspaceData?.safety.fieldsAccessed ?? 8} Gateway-approved fields</span>
+              <span><ShieldCheck size={13} /> {workspaceData?.safety.fieldsAccessed ?? 0} Gateway-approved fields</span>
             </div>
             <button
               className="generate-button"
@@ -964,9 +783,9 @@ function WorkspaceView({
       {workspaceData?.planner?.mode === "deterministic_fallback" && (
         <p className="planner-notice" role="status">
           <strong>Basic planner used.</strong>{" "}
-          {workspaceData.planner.reason === "ai_not_configured"
+          {workspaceData.planner.message ?? (workspaceData.planner.reason === "ai_not_configured"
             ? "AI planning is not configured for this connection."
-            : "AI planning was unavailable or its answer could not be validated."}{" "}
+            : "AI planning was unavailable or its answer could not be validated.")}{" "}
           Check the interpreted request and filters, or select Build workspace to try again.
         </p>
       )}
@@ -996,7 +815,7 @@ function WorkspaceView({
                   ? "Connecting"
                   : workspaceData?.sourceMode === "client_gateway"
                     ? "Client Gateway"
-                    : "Demo Gateway"}
+                    : workspaceData ? "Demo Gateway" : "No response"}
               </span>
               <span className="generated-tag"><Zap size={12} /> Generated in {workspaceSpec.generatedIn}</span>
               <button
@@ -1089,7 +908,7 @@ function WorkspaceView({
           </div>
         </section>
 
-        <aside className="inspector-panel">
+        {workspaceData && <aside className="inspector-panel">
           <div className="inspector-tabs">
             <button className={inspector === "safety" ? "active" : ""} onClick={() => setInspector("safety")}>
               Safety
@@ -1179,7 +998,7 @@ function WorkspaceView({
               </motion.div>
             )}
           </AnimatePresence>
-        </aside>
+        </aside>}
       </div>
     </div>
   );
@@ -1561,11 +1380,13 @@ function renderTableCell(
 
 async function requestDynamicWorkspace(
   prompt: string,
+  signal?:AbortSignal,
 ): Promise<DynamicWorkspaceResponse> {
-  const response = await fetch("/api/workspaces/generate", {
+  const response = await authenticatedFetch("/api/workspaces/generate", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ prompt, limit: 200 }),
+    signal,
   });
   const payload = (await response.json()) as
     | DynamicWorkspaceResponse
@@ -1585,7 +1406,7 @@ async function requestDynamicWorkspace(
 }
 
 async function requestAppStateBootstrap(): Promise<AppStateBootstrap> {
-  const response = await fetch("/api/app-state", {
+  const response = await authenticatedFetch("/api/app-state", {
     headers: { Accept: "application/json" },
     cache: "no-store",
   });
@@ -1596,7 +1417,7 @@ async function requestAppStateBootstrap(): Promise<AppStateBootstrap> {
 }
 
 async function requestAppStateMutation(action: AppStateAction) {
-  const response = await fetch("/api/app-state", {
+  const response = await authenticatedFetch("/api/app-state", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(action),
@@ -1607,7 +1428,7 @@ async function requestAppStateMutation(action: AppStateAction) {
 }
 
 async function requestGatewayHealth() {
-  const response = await fetch("/api/gateway/health", {
+  const response = await authenticatedFetch("/api/gateway/health", {
     headers: { Accept: "application/json" },
     cache: "no-store",
   });
@@ -1624,7 +1445,7 @@ async function requestGatewayHealth() {
 }
 
 async function requestGatewayCatalog(): Promise<GatewayCatalogPayload> {
-  const response = await fetch("/api/gateway/catalog", {
+  const response = await authenticatedFetch("/api/gateway/catalog", {
     method: "POST",
     headers: { Accept: "application/json" },
   });
@@ -1643,31 +1464,6 @@ async function requestGatewayCatalog(): Promise<GatewayCatalogPayload> {
 
 function wait(milliseconds: number) {
   return new Promise<void>((resolve) => window.setTimeout(resolve, milliseconds));
-}
-
-function normalizeLocalConnector(
-  source: Partial<ConnectorRecord>,
-): ConnectorRecord {
-  const supportedEngine = ["PostgreSQL", "MySQL", "SQL Server"].includes(
-    source.engine ?? "",
-  )
-    ? (source.engine as ConnectorRecord["engine"])
-    : "PostgreSQL";
-  const supportedStatus = ["draft", "healthy", "unavailable"].includes(
-    source.status ?? "",
-  )
-    ? (source.status as ConnectorRecord["status"])
-    : "draft";
-  return {
-    id: source.id ?? crypto.randomUUID(),
-    name: source.name ?? "Connector draft",
-    engine: supportedEngine,
-    host: source.host ?? "customer-network",
-    databaseName: source.databaseName ?? "insurance_operations",
-    region: source.region ?? "Mumbai",
-    status: supportedStatus,
-    lastCheckedAt: source.lastCheckedAt ?? null,
-  };
 }
 
 function selectPrimaryConnector(connectors: ConnectorRecord[]) {
@@ -2335,18 +2131,10 @@ function AuditView({
   );
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [actor, setActor] = useState("All actors");
-  const displayEvents: AuditDisplayEvent[] = events.length
-    ? events.map((event) => ({
+  const displayEvents: AuditDisplayEvent[] = events.map((event) => ({
         ...event,
         time: formatAuditTime(event.createdAt),
         icon: auditIcon(event.action),
-      }))
-    : auditEvents.map((event, index) => ({
-        ...event,
-        id: `demo-audit-${index}`,
-        outcome: "success" as const,
-        requestId: `req_demo_${index + 1}`,
-        details: {},
       }));
   const [selectedEvent, setSelectedEvent] = useState<AuditDisplayEvent | null>(null);
   const visibleEvents = actor === "All actors"
@@ -2429,6 +2217,8 @@ function GlobalOverlay({
   unreadNotifications,
   persistenceMode,
   activeUser,
+  organizationName,
+  auditRecords,
   emailAlerts,
   onSavePreferences,
   onMarkNotificationsRead,
@@ -2443,6 +2233,8 @@ function GlobalOverlay({
   unreadNotifications: number;
   persistenceMode: PersistenceMode;
   activeUser: AppStateBootstrap["user"];
+  organizationName:string;
+  auditRecords:AuditEventRecord[];
   emailAlerts: boolean;
   onSavePreferences: (emailAlerts: boolean) => Promise<void>;
   onMarkNotificationsRead: () => void;
@@ -2487,9 +2279,7 @@ function GlobalOverlay({
     return (
       <Modal title="Notifications" subtitle={`${unreadNotifications} unread updates`} onClose={onClose} variant="panel">
         <div className="notification-list">
-          <article className={unreadNotifications ? "unread" : ""}><span><ShieldCheck size={15} /></span><div><strong>Policy check passed</strong><p>Your latest workspace used 8 approved fields.</p><time>2 min ago</time></div></article>
-          <article className={unreadNotifications ? "unread" : ""}><span><Database size={15} /></span><div><strong>Data source healthy</strong><p>PostgreSQL responded within the expected threshold.</p><time>18 min ago</time></div></article>
-          <article><span><Save size={15} /></span><div><strong>Workspace saved</strong><p>Motor renewals is available {persistenceMode === "cloud" ? "across your sessions" : "on this device"}.</p><time>Yesterday</time></div></article>
+          {auditRecords.length ? auditRecords.slice(0,5).map(event=><article key={event.id}><span><ShieldCheck size={15}/></span><div><strong>{event.action}</strong><p>{event.outcome} · {event.target}</p><time>{formatAuditTime(event.createdAt)}</time></div></article>) : <p>No recorded notifications yet.</p>}
         </div>
         <div className="modal-actions"><button onClick={onClose}>Close</button><button className="primary-button" onClick={onMarkNotificationsRead}><CheckCheck size={14} /> Mark all read</button></div>
       </Modal>
@@ -2498,7 +2288,7 @@ function GlobalOverlay({
 
   if (overlay === "profile") {
     return (
-      <Modal title="Profile & preferences" subtitle="Workspace administrator" onClose={onClose} variant="panel">
+      <Modal title="Profile & preferences" subtitle={`Organization ${activeUser.role}`} onClose={onClose} variant="panel">
         <div className="profile-summary"><div className="profile-avatar large">{initials(activeUser.fullName)}</div><div><strong>{activeUser.fullName}</strong><span>{activeUser.email}</span></div></div>
         <div className="preference-list">
           <label><span><Mail size={15} /><div><strong>Email safety alerts</strong><small>Send a summary when a request is denied.</small></div></span><input type="checkbox" checked={emailAlertsDraft} onChange={(event) => setEmailAlertsDraft(event.target.checked)} /></label>
@@ -2524,10 +2314,10 @@ function GlobalOverlay({
       <div className="organization-list">
         <button className="active" onClick={() => {
           onClose();
-          setToast("Atlas Insurance is already active");
-        }}><span className="org-avatar">AI</span><div><strong>Atlas Insurance</strong><small>Operations · Mumbai data region</small></div><CheckCircle2 size={16} /></button>
+          setToast(`${organizationName} is already active`);
+        }}><span className="org-avatar">AI</span><div><strong>{organizationName}</strong><small>Signed-in organization</small></div><CheckCircle2 size={16} /></button>
       </div>
-      <div className="workspace-meta"><div><span>Role</span><strong>Workspace admin</strong></div><div><span>Environment</span><strong>Production demo</strong></div></div>
+      <div className="workspace-meta"><div><span>Role</span><strong>{activeUser.role}</strong></div><div><span>Environment</span><strong>Organization workspace</strong></div></div>
       <div className="secure-form-note"><LockKeyhole size={14} /> Switching workspaces never changes the underlying access policy.</div>
       <div className="modal-actions"><button onClick={onClose}>Close</button><button className="primary-button" onClick={() => onNavigate("sources")}><Database size={14} /> Manage sources</button></div>
     </Modal>
@@ -2547,17 +2337,26 @@ function Modal({
   children: React.ReactNode;
   variant?: "default" | "command" | "panel" | "wide";
 }) {
+  const dialogRef=useRef<HTMLElement>(null);
   useEffect(() => {
+    const previous=document.activeElement as HTMLElement|null;
+    const elements=()=>Array.from(dialogRef.current?.querySelectorAll<HTMLElement>('button:not([disabled]),a[href],input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex="0"]')??[]);
+    elements()[0]?.focus();
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
+      if(event.key==='Tab') {
+        const focusable=elements(),first=focusable[0],last=focusable.at(-1);
+        if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus();}
+        else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus();}
+      }
     };
     window.addEventListener("keydown", handleEscape);
-    return () => window.removeEventListener("keydown", handleEscape);
+    return () => {window.removeEventListener("keydown", handleEscape);previous?.focus();};
   }, [onClose]);
 
   return (
     <motion.div className="modal-backdrop" role="presentation" onMouseDown={onClose} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-      <motion.section className={`modal-card ${variant}`} role="dialog" aria-modal="true" aria-label={title} onMouseDown={(event) => event.stopPropagation()} initial={{ opacity: 0, y: 18, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 8, scale: 0.99 }} transition={spring}>
+      <motion.section ref={dialogRef} className={`modal-card ${variant}`}  role="dialog" aria-modal="true" aria-label={title} onMouseDown={(event) => event.stopPropagation()} initial={{ opacity: 0, y: 18, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 8, scale: 0.99 }} transition={spring}>
         <header><div><h3>{title}</h3>{subtitle && <p>{subtitle}</p>}</div><button className="icon-button compact" aria-label="Close dialog" onClick={onClose}><X size={15} /></button></header>
         <div className="modal-body">{children}</div>
       </motion.section>
@@ -2581,42 +2380,6 @@ function useOutsideClick<T extends HTMLElement>(
   }, [open, onDismiss]);
 
   return ref;
-}
-
-function readLocalArray<T>(key: string): T[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const value = window.localStorage.getItem(key);
-    return value ? JSON.parse(value) as T[] : [];
-  } catch {
-    return [];
-  }
-}
-
-function writeLocalArray<T>(key: string, value: T[]) {
-  try {
-    window.localStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    // Device storage is optional; the current session still keeps the update.
-  }
-}
-
-function readLocalBoolean(key: string, fallback: boolean) {
-  if (typeof window === "undefined") return fallback;
-  try {
-    const value = window.localStorage.getItem(key);
-    return value === null ? fallback : value === "true";
-  } catch {
-    return fallback;
-  }
-}
-
-function writeLocalBoolean(key: string, value: boolean) {
-  try {
-    window.localStorage.setItem(key, String(value));
-  } catch {
-    // Device storage is optional; the current session still keeps the update.
-  }
 }
 
 async function copyText(value: string) {

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { existsSync } from "node:fs";
 
 const developmentPreviewMeta =
   /<meta(?=[^>]*\bname=["']codex-preview["'])(?=[^>]*\bcontent=["']development["'])[^>]*>/i;
@@ -29,5 +30,10 @@ test("renders development preview metadata", async () => {
     response.headers.get("content-type") ?? "",
     /^text\/html\b/i,
   );
-  assert.match(await response.text(), developmentPreviewMeta);
+  const html = await response.text();
+  assert.match(html, developmentPreviewMeta);
+  assert.doesNotMatch(html, /https:\/\/fonts\.(?:googleapis|gstatic)\.com/);
+  const fonts = [...new Set(html.match(/\/assets\/Geist(?:Mono)?-Variable-[\w-]+\.woff2/g) ?? [])];
+  assert.equal(fonts.length, 2, "both font families should use emitted same-origin assets");
+  for (const font of fonts) assert.ok(existsSync(new URL(`../dist/client${font}`, import.meta.url)));
 });

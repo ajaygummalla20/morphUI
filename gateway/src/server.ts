@@ -100,7 +100,7 @@ export function createGatewayServer(options: {
           JSON.stringify({
             type: "morph_gateway_error",
             occurredAt: new Date().toISOString(),
-            message: error instanceof Error ? error.message : "Unknown error",
+            message: 'Gateway request failed',
           }),
         );
         sendJson(response, 500, {
@@ -175,10 +175,11 @@ async function handleCatalogDiscovery(
     return;
   }
 
-  const entityNames = insuranceSemanticCatalog.entities.map(
+  const permittedEntities = new Set(policyDecision.groups.flatMap(group=>options.policy.groups[group]??[]));
+  const entityNames = insuranceSemanticCatalog.entities.filter(entity=>request.purpose !== 'runtime' || permittedEntities.has(entity.entity)).map(
     (entity) => entity.entity,
   );
-  await Promise.all(
+  if (request.purpose !== 'runtime') await Promise.all(
     entityNames.map((entity) => {
       const entityPolicy = options.policy.entities[entity];
       return options.execute(
@@ -200,6 +201,7 @@ async function handleCatalogDiscovery(
     const allowedFields = new Set(entityPolicy.fields);
     return {
       ...semantic,
+      schemaVerified:request.purpose !== 'runtime',
       source: entityPolicy.source,
       defaultFields: semantic.defaultFields.filter((field) => allowedFields.has(field)),
       dateField:

@@ -1,0 +1,22 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import {generateKeyPair,exportJWK,decodeJwt} from 'jose';
+import {gatewayIdentityFor} from '../lib/auth/gateway';
+import {createOidcIdentityVerifier} from '../gateway/src/identity';
+test('catalog and query requests carry separate signed assertions bound to their request IDs',async(t)=>{
+  const {privateKey,publicKey}=await generateKeyPair('RS256',{extractable:true});
+  const publicJwk={...await exportJWK(publicKey),kid:'bridge-test'},privateJwk={...await exportJWK(privateKey),kid:'bridge-test'};
+  const settings={MORPH_AUTH_MODE:'oidc',MORPH_GATEWAY_URL:'https://gateway.example',MORPH_ORGANIZATION_ID:'org_one',MORPH_ASSERTION_ISSUER:'https://morph.example',MORPH_ASSERTION_AUDIENCE:'morph-gateway',MORPH_ASSERTION_PRIVATE_JWK:JSON.stringify(privateJwk)};
+  const previous=Object.fromEntries(Object.keys(settings).map(key=>[key,process.env[key]]));Object.assign(process.env,settings);
+  t.after(()=>{for(const[key,value]of Object.entries(previous)){if(value===undefined)delete process.env[key];else process.env[key]=value;}});
+  const actor={id:'u1',organizationId:'org_one',organizationName:'One',email:'member@example.test',fullName:'Member',role:'member' as const,subject:'s1',issuer:'https://identity.example'};
+  const mint=gatewayIdentityFor(actor),catalogId=crypto.randomUUID(),queryId=crypto.randomUUID();
+  const catalog=await mint(catalogId),query=await mint(queryId);
+  assert.notEqual(decodeJwt(catalog.assertion).jti,decodeJwt(query.assertion).jti);
+  const verify=createOidcIdentityVerifier({issuer:settings.MORPH_ASSERTION_ISSUER,audience:'morph-gateway',jwksUrl:'https://morph.example/jwks',maximumTokenAgeSeconds:300,clockToleranceSeconds:5,jwksCacheSeconds:300},{fetch:async()=>Response.json({keys:[publicJwk]})});
+  await assert.rejects(verify(catalog.assertion,{organizationId:'org_one',requestId:queryId}));
+  assert.equal((await verify(catalog.assertion,{organizationId:'org_one',requestId:catalogId})).email,actor.email);
+  assert.equal((await verify(query.assertion,{organizationId:'org_one',requestId:queryId})).subjectId,actor.subject);
+  await assert.rejects(verify(query.assertion,{organizationId:'org_one',requestId:queryId}));
+  await assert.rejects(gatewayIdentityFor({...actor,organizationId:'org_other'})(crypto.randomUUID()));
+});

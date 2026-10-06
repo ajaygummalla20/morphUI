@@ -117,6 +117,8 @@ export type DynamicWorkspaceResponse = {
     model: string | null;
     validated: true;
     reason: "ai_plan" | "ai_not_configured" | "ai_plan_rejected";
+    failureCode?:'not_configured'|'authentication'|'quota'|'timeout'|'invalid_plan'|'unavailable';
+    message?:string;
   };
   safety: {
     readOnly: true;
@@ -205,8 +207,8 @@ export class UnsupportedWorkspaceRequestError extends Error {
     "Show the active policy portfolio by product",
   ];
 
-  constructor() {
-    super("Ask about policies, claims, renewals, or endorsements.");
+  constructor(message="Ask about policies, claims, renewals, or endorsements.") {
+    super(message);
   }
 }
 

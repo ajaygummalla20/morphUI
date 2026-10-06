@@ -159,7 +159,7 @@ export type OnboardingPolicyDecision =
   | { allowed: false; reasonCode: PolicyReasonCode; reason: string };
 
 export function evaluateOnboardingPolicy(
-  request: Pick<GatewayExecuteRequest, "connectorId" | "identity">,
+  request: Pick<GatewayExecuteRequest, "connectorId" | "identity"> & {purpose?:'onboarding'|'runtime'},
   policy: GatewayPolicy,
   identity: VerifiedGatewayIdentity,
 ): OnboardingPolicyDecision {
@@ -185,7 +185,7 @@ export function evaluateOnboardingPolicy(
       "The client identity policy could not verify this user.",
     );
   }
-  if (!groups.some((group) => policy.onboardingAdminGroups.includes(group))) {
+  if (request.purpose !== 'runtime' && !groups.some((group) => policy.onboardingAdminGroups.includes(group))) {
     return deny(
       "onboarding_not_allowed",
       "The verified identity is not a connector onboarding administrator.",

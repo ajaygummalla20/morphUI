@@ -5,7 +5,6 @@ import {
   GatewayProtocolError,
   discoverGatewayCatalog,
   executeWorkspaceGateway,
-  gatewayIdentityFromRequest,
 } from "@/lib/gateway/client";
 import {
   applyGatewayDecision,
@@ -15,16 +14,27 @@ import {
   UnsupportedWorkspaceRequestError,
 } from "@/lib/workspaces/dynamic";
 import { planWorkspaceRequestWithAi } from "@/lib/workspaces/ai-planner";
+import { guardRequest, demoMode } from '@/lib/auth/session';
+import { gatewayIdentityFor } from '@/lib/auth/gateway';
+import { activeConnectorFor, ensureAppActor, recordWorkspaceRun } from '@/db/app-state';
+import { SecurityError, securityResponse, readJsonLimited, logOperation } from '@/lib/server/security';
 
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
   const startedAt = performance.now();
+  const requestId = crypto.randomUUID();
 
   try {
-    const input = dynamicWorkspaceRequestSchema.parse(await request.json());
-    const identity = gatewayIdentityFromRequest(request);
-    const discovery = await discoverGatewayCatalog({ identity });
+    const session = await guardRequest(request,'generate','viewer',12);
+    const actor = demoMode()?await ensureAppActor(request):session;
+    const input = dynamicWorkspaceRequestSchema.parse(await readJsonLimited(request));
+    const {connector,entities} = await activeConnectorFor(actor);
+    const identity = gatewayIdentityFor(session);
+    const discovery = await discoverGatewayCatalog({ identity,connectorId:demoMode()?undefined:process.env.MORPH_GATEWAY_CONNECTOR_ID??connector.id,purpose:'runtime' });
+    discovery.catalog.entities = discovery.catalog.entities.filter(entity=>entities.includes(entity.entity));
+    discovery.catalog.relationships = discovery.catalog.relationships.filter(r=>entities.includes(r.fromEntity)&&entities.includes(r.toEntity));
+    if (!discovery.catalog.entities.length) throw new SecurityError(403,'datasets_disabled','No datasets are enabled for this connector.');
     const plannerResult = await planWorkspaceRequestWithAi(
       input.prompt,
       discovery.catalog,
@@ -45,6 +55,7 @@ export async function POST(request: Request) {
       queryPlan,
       identity,
       catalogEntity,
+      connectorId:demoMode()?undefined:process.env.MORPH_GATEWAY_CONNECTOR_ID??connector.id,
     });
     const response = {
       ...applyGatewayDecision(
@@ -61,6 +72,8 @@ export async function POST(request: Request) {
       planner: plannerResult.planner,
     };
 
+    await recordWorkspaceRun(actor,{prompt:input.prompt,response,status:'succeeded',durationMs:Math.round(performance.now()-startedAt)});
+    logOperation('generate',requestId,plannerResult.planner.mode,startedAt);
     return Response.json(response, {
       headers: {
         "Cache-Control": "no-store",
@@ -72,6 +85,8 @@ export async function POST(request: Request) {
       },
     });
   } catch (error) {
+    logOperation('generate',requestId,error instanceof SecurityError?error.code:'failed',startedAt);
+    const denied=securityResponse(error); if (denied) return denied;
     if (error instanceof GatewayIdentityRequiredError) {
       return Response.json(
         {
@@ -121,7 +136,6 @@ export async function POST(request: Request) {
       );
     }
     if (error instanceof GatewayProtocolError) {
-      console.error("Gateway protocol validation failed", error);
       return Response.json(
         {
           error:
@@ -132,7 +146,6 @@ export async function POST(request: Request) {
       );
     }
 
-    console.error("Dynamic workspace generation failed", error);
     return Response.json(
       {
         error:

@@ -71,6 +71,8 @@ export type WorkspacePlannerMetadata = {
   model: string | null;
   validated: true;
   reason: "ai_plan" | "ai_not_configured" | "ai_plan_rejected";
+  failureCode?:'not_configured'|'authentication'|'quota'|'timeout'|'invalid_plan'|'unavailable';
+  message?:string;
 };
 
 export type WorkspacePlannerResult = {
@@ -86,6 +88,7 @@ type ProposalInput = {
 };
 
 type PlannerOptions = {
+  requireAi?:boolean;
   provider?: PlannerProvider;
   apiKey?: string;
   model?: string;
@@ -100,6 +103,7 @@ export async function planWorkspaceRequestWithAi(
 ): Promise<WorkspacePlannerResult> {
   const configuredProvider = options.provider ?? process.env.MORPH_PLANNER_PROVIDER ?? "openai";
   if (configuredProvider !== "openai" && configuredProvider !== "google") {
+    if (options.requireAi) throw new Error('AI planner is not configured.');
     return fallbackPlan(prompt, catalog, requestedLimit, null, "ai_not_configured");
   }
   const provider = configuredProvider;
@@ -110,6 +114,7 @@ export async function planWorkspaceRequestWithAi(
   const enabled = Boolean(options.generateProposal) || process.env.MORPH_AI_PLANNER_ENABLED === "true";
 
   if (!enabled || (!options.generateProposal && !apiKey)) {
+    if (options.requireAi) throw new Error('AI planner is not configured.');
     return fallbackPlan(prompt, catalog, requestedLimit, null, "ai_not_configured");
   }
 
@@ -118,7 +123,7 @@ export async function planWorkspaceRequestWithAi(
       ? await options.generateProposal({ prompt, catalog, limit: requestedLimit, model })
       : await generateProposalWithModel({ prompt, catalog, limit: requestedLimit, model }, apiKey!, provider);
     const proposal = aiWorkspaceProposalSchema.parse(rawProposal);
-    if (!proposal.supported) throw new UnsupportedWorkspaceRequestError();
+    if (!proposal.supported) throw new UnsupportedWorkspaceRequestError(proposal.unsupportedReason || 'Please specify the dataset, filters and preferred view.');
 
     return {
       plan: validateProposal(proposal, catalog, requestedLimit),
@@ -131,8 +136,13 @@ export async function planWorkspaceRequestWithAi(
     };
   } catch (error) {
     if (error instanceof UnsupportedWorkspaceRequestError) throw error;
-    console.warn("AI workspace plan rejected; using deterministic fallback");
-    return fallbackPlan(prompt, catalog, requestedLimit, model, "ai_plan_rejected");
+    const failureCode=classifyPlannerFailure(error);
+    console.warn(JSON.stringify({type:'morph_planner_fallback',failureCode}));
+    if(options.requireAi) throw new Error(`AI planner verification failed: ${failureCode}`);
+    const result=fallbackPlan(prompt, catalog, requestedLimit, model, "ai_plan_rejected");
+    result.planner.failureCode=failureCode;
+    result.planner.message=plannerFailureMessages[failureCode];
+    return result;
   }
 }
 
@@ -202,6 +212,7 @@ function buildPlannerInstructions(catalog: SemanticCatalog) {
     "For business terms such as pending or open, translate them through the catalogue's valueSets and return their concrete allowed values as a comma-separated `in` filter.",
     "For relative dates, use today's date and encode between filters as YYYY-MM-DD..YYYY-MM-DD (two dots between the dates).",
     "Set supported=false when the request cannot be represented by this catalogue; still populate all required fields with conservative catalogue values.",
+    "If a necessary dataset or measure is ambiguous, set supported=false and put one concise clarification question in unsupportedReason. Do not silently invent business intent.",
     `Approved catalogue: ${JSON.stringify(safeCatalog)}`,
   ].join("\n");
 }
@@ -351,6 +362,30 @@ function fallbackPlan(
       model,
       validated: true,
       reason,
+      failureCode:reason==='ai_not_configured'?'not_configured':'invalid_plan',
+      message:reason==='ai_not_configured'?plannerFailureMessages.not_configured:plannerFailureMessages.invalid_plan,
     },
   };
+}
+
+const plannerFailureMessages = {
+  not_configured:'AI planning has not been configured for this connection.',
+  authentication:'The AI provider rejected its credentials. Ask an administrator to check the server configuration.',
+  quota:'The AI provider quota or rate limit was reached. Retry later.',
+  timeout:'The AI provider took too long to respond. You can retry the request.',
+  invalid_plan:'The AI response did not pass catalogue validation. Review the basic interpretation before using it.',
+  unavailable:'The AI provider is temporarily unavailable. You can retry shortly.',
+} as const;
+export function classifyPlannerFailure(error:unknown):keyof typeof plannerFailureMessages {
+  let current=error;
+  for(let depth=0;depth<4&&current&&typeof current==='object';depth++) {
+    const value=current as {statusCode?:number;status?:number;name?:string;cause?:unknown};
+    const status=value.statusCode??value.status;
+    if(status===401||status===403) return 'authentication';
+    if(status===429) return 'quota';
+    if(status&&status>=500) return 'unavailable';
+    if(value.name==='TimeoutError'||value.name==='AbortError') return 'timeout';
+    current=value.cause;
+  }
+  return 'invalid_plan';
 }
