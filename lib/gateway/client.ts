@@ -1,7 +1,9 @@
+import { validateAnalysis } from "./analysis";
 import type { WorkspacePlan, WorkspaceSourceMode } from "@/lib/workspaces/dynamic";
 import type { SemanticEntity } from "@/lib/catalog/semantic";
 import {
   GATEWAY_PROTOCOL_VERSION,
+  gatewayAggregateRowSchema,
   gatewayCatalogRequestSchema,
   gatewayCatalogResultSchema,
   gatewayHealthResponseSchema,
@@ -113,16 +115,24 @@ export async function executeWorkspaceGateway(options: {
   }
 
   const selectedFields = new Set(request.plan.fields);
+  const analytical = Boolean(request.plan.analysis);
+  if (analytical) {
+    try {
+      validateAnalysis(request.plan, options.catalogEntity);
+      response.rows.forEach(row => gatewayAggregateRowSchema.parse(row));
+      if (response.resultScope !== "all_matching_records" || response.maskedFields.length) throw new Error("Invalid analysis scope");
+    } catch { throw new GatewayProtocolError("The Gateway did not return a complete, approved analysis."); }
+  }
   if (
     response.catalogVersion !== request.plan.catalogVersion ||
     JSON.stringify(response.executedPlan) !== JSON.stringify(request.plan) ||
     response.rows.length > request.plan.rowLimit ||
     response.returnedRows !== response.rows.length ||
     response.rows.length > response.maximumRows ||
-    response.rows.some((row) => Object.keys(row).length !== selectedFields.size ||
-      Object.keys(row).some((field) => !selectedFields.has(field))) ||
+    (!analytical && response.rows.some((row) => Object.keys(row).length !== selectedFields.size ||
+      Object.keys(row).some((field) => !selectedFields.has(field)))) ||
     response.maskedFields.some((field) => !selectedFields.has(field)) ||
-    options.catalogEntity.fields.some((field) => field.masked && selectedFields.has(field.name) && !response.maskedFields.includes(field.name))
+    (!analytical && options.catalogEntity.fields.some((field) => field.masked && selectedFields.has(field.name) && !response.maskedFields.includes(field.name)))
   ) {
     throw new GatewayProtocolError("The client Gateway response does not match the approved query plan.");
   }
@@ -130,7 +140,7 @@ export async function executeWorkspaceGateway(options: {
   return {
     decision: response,
     sourceMode: gatewayUrl ? "client_gateway" : "secure_demo",
-    records: decodeGatewayRows(options.catalogEntity, response.rows),
+    records: analytical ? response.rows.map(row => gatewayAggregateRowSchema.parse(row)) : decodeGatewayRows(options.catalogEntity, response.rows),
   };
 }
 

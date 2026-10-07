@@ -90,6 +90,7 @@ export const semanticEntitySchema = z
     maximumRows: z.number().int().min(1).max(200),
     accessMode: z.literal("read_only"),
     schemaVerified: z.boolean(),
+    analysisAllowed: z.boolean().default(false),
     fields: z.array(semanticFieldSchema).min(1).max(40),
     metrics: z.array(semanticMetricSchema).min(1).max(12),
   })
@@ -243,10 +244,11 @@ export const insuranceSemanticCatalog: SemanticCatalog = semanticCatalogSchema.p
       maximumRows: 200,
       accessMode: "read_only",
       schemaVerified: true,
+      analysisAllowed: true,
       fields: [
         field({ name: "policy_number", label: "Policy", description: "Client policy identifier.", dataType: "string", semanticType: "identifier", format: "id", sensitivity: "internal", masked: false, sortable: true, groupable: false, synonyms: ["policy no", "policy number"] }),
         field({ name: "customer_name", label: "Customer", description: "Masked policyholder display name.", dataType: "string", semanticType: "person", format: "person", sensitivity: "confidential", masked: true, sortable: true, groupable: false, synonyms: ["policyholder", "insured"] }),
-        field({ name: "product", label: "Product", description: "Motor insurance product.", dataType: "string", semanticType: "category", format: "text", sensitivity: "internal", masked: false, sortable: true, groupable: true, filterOperators: ["equals", "in"], synonyms: ["plan", "line of business"], allowedValues: ["comprehensive", "third_party", "own_damage"] }),
+        field({ name: "product", label: "Product", description: "Client product display name, not a coverage-type or product-category code. Use exact user-supplied names for filters.", dataType: "string", semanticType: "category", format: "text", sensitivity: "internal", masked: false, sortable: true, groupable: true, filterOperators: ["equals", "in"], synonyms: ["plan", "line of business"], allowedValues: [] }),
         field({ name: "branch", label: "Branch", description: "Servicing insurance branch.", dataType: "string", semanticType: "category", format: "text", sensitivity: "internal", masked: false, sortable: true, groupable: true, filterOperators: ["equals", "in"], synonyms: ["office", "location"] }),
         field({ name: "relationship_manager", label: "Relationship manager", description: "Employee responsible for the policy.", dataType: "string", semanticType: "person", format: "person", sensitivity: "internal", masked: false, sortable: true, groupable: true, filterOperators: ["equals", "in"], synonyms: ["rm", "manager", "owner"] }),
         field({ name: "start_date", label: "Start date", description: "Policy coverage start date.", dataType: "date", semanticType: "date", format: "date", sensitivity: "internal", masked: false, sortable: true, groupable: false, filterOperators: ["after", "before", "between"] }),
@@ -276,6 +278,7 @@ export const insuranceSemanticCatalog: SemanticCatalog = semanticCatalogSchema.p
       maximumRows: 200,
       accessMode: "read_only",
       schemaVerified: true,
+      analysisAllowed: true,
       fields: [
         field({ name: "claim_number", label: "Claim", description: "Client claim identifier.", dataType: "string", semanticType: "identifier", format: "id", sensitivity: "internal", masked: false, sortable: true, groupable: false, synonyms: ["claim no", "claim number"] }),
         field({ name: "policy_number", label: "Policy", description: "Related policy identifier.", dataType: "string", semanticType: "identifier", format: "id", sensitivity: "internal", masked: false, sortable: true, groupable: false }),
@@ -307,6 +310,7 @@ export const insuranceSemanticCatalog: SemanticCatalog = semanticCatalogSchema.p
       maximumRows: 200,
       accessMode: "read_only",
       schemaVerified: true,
+      analysisAllowed: true,
       fields: [
         field({ name: "endorsement_number", label: "Endorsement", description: "Client endorsement identifier.", dataType: "string", semanticType: "identifier", format: "id", sensitivity: "internal", masked: false, sortable: true, groupable: false }),
         field({ name: "policy_number", label: "Policy", description: "Related policy identifier.", dataType: "string", semanticType: "identifier", format: "id", sensitivity: "internal", masked: false, sortable: true, groupable: false }),
@@ -319,7 +323,7 @@ export const insuranceSemanticCatalog: SemanticCatalog = semanticCatalogSchema.p
         field({ name: "branch", label: "Branch", description: "Policy servicing branch.", dataType: "string", semanticType: "category", format: "text", sensitivity: "internal", masked: false, sortable: true, groupable: true, filterOperators: ["equals", "in"] }),
       ],
       metrics: [
-        { id: "endorsement_count", label: "Open requests", description: "Number of endorsement requests returned.", operation: "count", field: null, format: "number" },
+        { id: "endorsement_count", label: "Endorsements", description: "Number of endorsement requests returned.", operation: "count", field: null, format: "number" },
         { id: "premium_impact", label: "Premium impact", description: "Total premium difference.", operation: "sum", field: "premium_delta", format: "currency" },
         { id: "average_impact", label: "Average impact", description: "Average premium difference per request.", operation: "average", field: "premium_delta", format: "currency" },
       ],

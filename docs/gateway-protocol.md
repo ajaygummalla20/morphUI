@@ -1,4 +1,4 @@
-# Morph Gateway protocol v1.2
+# Morph Gateway protocol v1.3
 
 The Morph Gateway is installed and operated inside the client environment. It
 is the only component allowed to hold database credentials, cryptographically
@@ -21,7 +21,7 @@ The Gateway must reject any request that contains:
 - an unverified identity;
 - an invalid, expired, incorrectly issued or replayed identity assertion; or
 - a stale catalogue version or unapproved sort field; or
-- a protocol payload outside the strict v1.2 schema.
+- a protocol payload outside the strict v1.3 schema.
 
 ## Required endpoints
 
@@ -84,7 +84,26 @@ For enterprise production, replace the scoped token with mutual TLS or a
 private network tunnel and rotate credentials through the client's secret
 manager.
 
-Protocol v1.2 accepts RS256 identity assertions with a maximum configured age of
+Protocol v1.3 accepts RS256 identity assertions with a maximum configured age of
 five minutes. The request carries the organization and assertion only; subject,
 email and group values used for authorization come from the verified token and
 the client-owned policy.
+
+## Complete analytic answers
+
+Protocol 1.3 adds an optional `analysis` definition: one catalogue metric, optional
+approved date/grain/range, and `none` or `previous_bucket` comparison. The client
+policy must opt in with `aggregateMetricIds`; omitted settings deny analysis.
+Measures, dates and groupings must be unmasked and approved, with the date's
+`between` operator authorized. Growth requires complete calendar periods.
+
+The compiler aggregates all matching business records before limiting result
+buckets/groups. It retrieves one extra aggregate row to detect overflow; the
+Gateway denies incomplete results rather than showing a misleading partial total.
+Analytic rows are `{bucket, group, value, record_count}` and the response declares
+`resultScope: all_matching_records`. Record responses use `returned_records`.
+The UI plan separately selects `chartValue`: metric levels, absolute period change,
+or percentage period change. This display choice cannot change the authorized
+query or introduce a new database calculation. No customer records are sent to the model. Policy premium trends currently use
+coverage start date, not an unapproved issuance-date field. Install the updated
+Gateway and app together; earlier protocol versions fail closed.

@@ -13,7 +13,7 @@ import {
   dynamicWorkspaceRequestSchema,
   UnsupportedWorkspaceRequestError,
 } from "@/lib/workspaces/dynamic";
-import { planWorkspaceRequestWithAi } from "@/lib/workspaces/ai-planner";
+import { planWorkspaceRequestWithAi, WorkspacePlannerUnavailableError } from "@/lib/workspaces/ai-planner";
 import { guardRequest, demoMode } from '@/lib/auth/session';
 import { gatewayIdentityFor } from '@/lib/auth/gateway';
 import { activeConnectorFor, ensureAppActor, recordWorkspaceRun } from '@/db/app-state';
@@ -39,6 +39,7 @@ export async function POST(request: Request) {
       input.prompt,
       discovery.catalog,
       input.limit,
+      { allowFallback: demoMode() && process.env.MORPH_ALLOW_RULE_BASED_PLANNER === "true" },
     );
     const plan = plannerResult.plan;
     const queryPlan = createWorkspaceQueryPlan(plan);
@@ -85,8 +86,11 @@ export async function POST(request: Request) {
       },
     });
   } catch (error) {
-    logOperation('generate',requestId,error instanceof SecurityError?error.code:'failed',startedAt);
+    logOperation('generate',requestId,error instanceof SecurityError?error.code:error instanceof WorkspacePlannerUnavailableError?`ai_planner_${error.failureCode}`:'failed',startedAt);
     const denied=securityResponse(error); if (denied) return denied;
+    if (error instanceof WorkspacePlannerUnavailableError) {
+      return Response.json({ error: error.message, code: `ai_planner_${error.failureCode}` }, { status: 503, headers: { "Cache-Control": "no-store" } });
+    }
     if (error instanceof GatewayIdentityRequiredError) {
       return Response.json(
         {

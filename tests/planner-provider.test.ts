@@ -9,7 +9,7 @@ test("model date ranges are canonicalized and invalid calendar bounds rejected",
     fields: ["policy_number", "total_premium", "relationship_manager"],
     filters: [{ field: "expiry_date", operator: "between", value: "2026-09-16,2026-10-01" }],
     groupBy: "relationship_manager", orderBy: [], metricIds: [], visualization: "donut",
-    presentation: { blocks: ["chart", "table"], tableLayout: "records" }, unsupportedReason: "",
+    presentation: { blocks: ["table"], tableLayout: "records" }, unsupportedReason: "",
   };
   const result = validateProposal(proposal, insuranceSemanticCatalog);
   assert.equal(result.filters[0].value, "2026-09-16..2026-10-01");
@@ -29,6 +29,7 @@ test("Gemini sends structured-output requests only to Google and validates the r
   });
   const proposal = {
     supported: true, intent: "endorsements", entity: "endorsements",
+    analysis: { metricId: "endorsement_count", time: null, comparison: "none" },
     title: "Pending endorsements by type", interpretation: "Grouped table only",
     fields: ["type", "premium_delta"],
     filters: [{ field: "status", operator: "in", value: "requested,documents_pending,under_review" }],
@@ -46,9 +47,9 @@ test("Gemini sends structured-output requests only to Google and validates the r
     const body = JSON.parse(String(init.body));
     assert.equal(body.generationConfig.responseMimeType, "application/json");
     assert.ok(body.generationConfig.responseJsonSchema || body.generationConfig.responseSchema);
-    return Response.json({ candidates: [{ content: { role: "model", parts: [{ text: JSON.stringify(proposal) }] }, finishReason: "STOP" }] });
+    return Response.json({ candidates: [{ content: { role: "model", parts: [{ text: JSON.stringify({ ...proposal, chartValue: null }) }] }, finishReason: "STOP" }] });
   });
-  const options = { provider: "google" as const, model: "gemini-flash-latest", apiKey: "test-google-key" };
+  const options = { allowFallback: true, provider: "google" as const, model: "gemini-flash-latest", apiKey: "test-google-key" };
   const result = await planWorkspaceRequestWithAi("Show pending endorsements grouped by type in a table only", insuranceSemanticCatalog, 200, options);
   assert.equal(result.planner.mode, "ai");
   assert.deepEqual(result.plan.presentation.blocks, ["table"]);
@@ -59,7 +60,7 @@ test("Gemini sends structured-output requests only to Google and validates the r
   assert.equal(calls.length, 2);
 });
 
-test("Google authentication failure uses safe fallback without calling OpenAI", async (t) => {
+test("explicit compatibility mode labels Google authentication fallback without calling OpenAI", async (t) => {
   const previous = process.env.MORPH_AI_PLANNER_ENABLED;
   process.env.MORPH_AI_PLANNER_ENABLED = "true";
   t.after(() => {
@@ -73,9 +74,48 @@ test("Google authentication failure uses safe fallback without calling OpenAI", 
     return Response.json({ error: { code: 403, status: "PERMISSION_DENIED", message: "Test denial" } }, { status: 403 });
   });
   const result = await planWorkspaceRequestWithAi("Show pending endorsements", insuranceSemanticCatalog, 200, {
-    provider: "google", model: "gemini-flash-latest", apiKey: "test-google-key",
+    allowFallback: true, provider: "google", model: "gemini-flash-latest", apiKey: "test-google-key",
   });
   assert.equal(result.planner.mode, "deterministic_fallback");
   assert.equal(result.planner.reason, "ai_plan_rejected");
   assert.equal(calls, 1);
+});
+
+test("OpenAI receives a strict generation schema with required nullable analysis and chartValue", async (t) => {
+  const previous = process.env.MORPH_AI_PLANNER_ENABLED;
+  process.env.MORPH_AI_PLANNER_ENABLED = "true";
+  t.after(() => {
+    if (previous === undefined) delete process.env.MORPH_AI_PLANNER_ENABLED;
+    else process.env.MORPH_AI_PLANNER_ENABLED = previous;
+  });
+  let calls = 0;
+  let format: { strict: boolean; schema: { properties: Record<string, unknown>; required: string[] } } | undefined;
+  t.mock.method(globalThis, "fetch", async (url: string, init: RequestInit) => {
+    calls++;
+    assert.equal(String(url), "https://api.openai.com/v1/responses");
+    const body = JSON.parse(String(init.body));
+    assert.equal(body.store, false);
+    format = body.text?.format;
+    // No external request: provider rejection also exercises the safe error path.
+    return Response.json({ error: { message: "private mocked credential rejection", type: "invalid_request_error", code: "invalid_api_key" } }, { status: 403 });
+  });
+  await assert.rejects(
+    planWorkspaceRequestWithAi("Show monthly premium growth as a percentage line chart", insuranceSemanticCatalog, 200, {
+      provider: "openai", model: "test-only-model", apiKey: "test-openai-key",
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /credentials|authentication|configuration/i);
+      assert.doesNotMatch(error.message, /private mocked credential rejection|test-openai-key/);
+      return true;
+    },
+  );
+  assert.equal(calls, 1);
+  assert.ok(format);
+  assert.equal(format.strict, true);
+  assert.deepEqual([...format.schema.required].sort(), Object.keys(format.schema.properties).sort());
+  for (const field of ["analysis", "chartValue"]) {
+    assert.ok(format.schema.required.includes(field), `${field} must be required by the provider schema`);
+    assert.match(JSON.stringify(format.schema.properties[field]), /"null"/, `${field} must allow null`);
+  }
 });

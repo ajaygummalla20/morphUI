@@ -7,6 +7,7 @@ const database=createSqliteD1();
 (env as unknown as {DB:unknown}).DB=database.d1;
 for(const name of readdirSync('drizzle').filter(n=>n.endsWith('.sql')).sort()) database.sqlite.exec(readFileSync(`drizzle/${name}`,'utf8'));
 process.env.MORPH_AUTH_MODE='demo';
+process.env.MORPH_ALLOW_RULE_BASED_PLANNER='true';
 process.env.MORPH_APP_ORIGIN='http://localhost';
 const {ensureAppActor}=await import('../../db/app-state');
 await ensureAppActor(new Request('http://localhost/api/app-state'));

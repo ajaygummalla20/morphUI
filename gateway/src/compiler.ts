@@ -1,3 +1,5 @@
+import { insuranceSemanticCatalog } from "../../lib/catalog/semantic.js";
+import { validateAnalysis } from "../../lib/gateway/analysis.js";
 import type { GatewayQueryPlan } from "../../lib/gateway/contract.js";
 
 export type QueryParameter = string | number | string[];
@@ -151,11 +153,11 @@ export function compileQuery(plan: GatewayQueryPlan): CompiledQuery {
   });
   const values: QueryParameter[] = [];
   const predicates = plan.filters.map((filter) => {
-    const expression = entity.filters[filter.field];
+    const expression = dateExpression(plan.entity, filter.field, entity.filters[filter.field]);
     if (!expression) throw new Error(`Unknown filter field: ${filter.field}`);
 
     if (filter.operator === "current_month") {
-      return `${expression} >= date_trunc('month', CURRENT_DATE) AND ${expression} < date_trunc('month', CURRENT_DATE) + INTERVAL '1 month'`;
+      return `${expression} >= date_trunc('month', (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date) AND ${expression} < date_trunc('month', (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date) + INTERVAL '1 month'`;
     }
     if (filter.operator === "between") {
       if (typeof filter.value !== "string") {
@@ -210,6 +212,32 @@ export function compileQuery(plan: GatewayQueryPlan): CompiledQuery {
     throw new Error("Unsupported filter operator.");
   });
 
+  if (plan.analysis) {
+    const semantic = insuranceSemanticCatalog.entities.find(item => item.entity === plan.entity)!;
+    const { analysis, metric } = validateAnalysis(plan, semantic);
+    const time = analysis.time;
+    if (time) {
+      values.push(time.start, time.end);
+      predicates.push(`${dateExpression(plan.entity, time.field, entity.filters[time.field])} BETWEEN $${values.length - 1}::date AND $${values.length}::date`);
+    }
+    const measure = metric.field ? entity.sorts[metric.field] : "NULL::numeric";
+    const bucket = time ? `date_trunc('${time.grain}', time_value)::date::text` : "NULL::text";
+    const aggregate = metric.operation === "count" ? "COUNT(*)" : `${metric.operation === "sum" ? "SUM" : "AVG"}(measure)`;
+    values.push(plan.rowLimit + 1); // Look ahead; the Gateway rejects incomplete aggregate results.
+    return {
+      text: `WITH source_records AS (
+        SELECT DISTINCT ${entity.sorts[semantic.primaryKey]} AS record_id,
+          ${measure} AS measure, ${time ? dateExpression(plan.entity, time.field, entity.filters[time.field]) : "NULL::date"} AS time_value,
+          ${plan.groupBy ? entity.sorts[plan.groupBy] : "NULL::text"} AS group_value
+        FROM ${entity.from}
+        ${predicates.length ? `WHERE ${predicates.join(" AND ")}` : ""}
+      ) SELECT ${bucket} AS bucket, group_value::text AS "group",
+        ${aggregate}::float8 AS value, COUNT(*)::int AS record_count
+        FROM source_records GROUP BY 1, 2 ORDER BY 1, 2 LIMIT $${values.length}`,
+      values,
+    };
+  }
+
   const orderBy = plan.orderBy.length
     ? plan.orderBy
         .map((sort) => {
@@ -256,4 +284,9 @@ function isDateOnly(value: string | undefined) {
   if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   const parsed = new Date(`${value}T00:00:00.000Z`);
   return !Number.isNaN(parsed.getTime()) && parsed.toISOString().startsWith(value);
+}
+
+function dateExpression(entity: GatewayQueryPlan["entity"], field: string, expression: string) {
+  // requested_at is the adapter's only timestamp; business dates use UTC calendar days.
+  return entity === "endorsements" && field === "requested_at" ? `(${expression} AT TIME ZONE 'UTC')::date` : expression;
 }

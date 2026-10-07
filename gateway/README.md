@@ -10,7 +10,7 @@ catalog adapters; the Gateway deliberately has no generic raw-SQL endpoint.
 
 ## Security properties
 
-- accepts only the strict Morph query-plan protocol v1.2;
+- accepts only the strict Morph query-plan protocol v1.3;
 - authenticates every request with a scoped service token;
 - verifies an RS256 OIDC assertion against the client's HTTPS JWKS endpoint;
 - requires verified email, issuer, audience, organization, expiry and token age;
@@ -97,3 +97,10 @@ Audit events are JSON lines written to standard output for collection by the
 client's SIEM. They include the decision, policy version, entity, counts,
 duration and a salted subject hash. They exclude prompts, filters values,
 returned rows, database credentials and plain user identifiers.
+
+Analytics require explicit `aggregateMetricIds` approval in each entity policy.
+The example opts in to catalogue count/sum/average measures. Existing policies
+without this setting keep record queries and deny analytical queries. Approved
+measures, date fields and category fields must be unmasked. Calendar analysis
+uses UTC days; results aggregate the entire authorized selection before result
+group limits. An extra result group triggers an audited denial, not truncation.

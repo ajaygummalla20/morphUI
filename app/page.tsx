@@ -279,6 +279,7 @@ function WorkspaceApp() {
     setSaved(false);
     setWorkspaceError(null);
     setWorkspaceLoading(true);
+    setWorkspaceData(null);
     setPhase("understanding");
     requestController.current?.abort();
     const sequence=++requestSequence.current;
@@ -304,11 +305,11 @@ function WorkspaceApp() {
       const message =
         error instanceof Error
           ? error.message
-          : "We could not build this workspace. Your previous view was preserved.";
+          : "We could not answer this request. Please retry.";
       setPhase("ready");
       setWorkspaceError(message);
       setWorkspaceData(null);
-      setToast("Workspace not changed — check the guided request");
+      setToast("Request needs attention — see the message above");
     } finally {
       if(sequence===requestSequence.current)setWorkspaceLoading(false);
     }
@@ -1103,15 +1104,18 @@ function WorkspaceBlockRenderer({
   }
 
   if (block.type === "chart") {
-    const maximum = Math.max(...block.items.map((item) => item.value), 1);
-    const total = block.items.reduce((sum, item) => sum + item.value, 0);
+    const maximum = Math.max(...block.items.map((item) => item.value ?? 0), 0);
+    const minimum = Math.min(...block.items.map((item) => item.value ?? 0), 0);
+    const range = Math.max(maximum - minimum, 1);
+    const lineY = (value: number) => 48 - ((value - minimum) / range) * 44;
+    const total = block.items.reduce((sum, item) => sum + (item.value ?? 0), 0);
     const palette = ["#b9f858", "#79a93a", "#4d7ca8", "#ee9a55", "#8d70c9", "#d4d9cc"];
     const donutGradient = block.items.map((item, index) => {
       const startValue = block.items
         .slice(0, index)
-        .reduce((sum, candidate) => sum + candidate.value, 0);
+        .reduce((sum, candidate) => sum + (candidate.value ?? 0), 0);
       const start = total ? (startValue / total) * 100 : 0;
-      const end = total ? ((startValue + item.value) / total) * 100 : 0;
+      const end = total ? ((startValue + (item.value ?? 0)) / total) * 100 : 0;
       return `${palette[index % palette.length]} ${start}% ${end}%`;
     }).join(", ");
     const formatter = new Intl.NumberFormat("en-IN", {
@@ -1120,33 +1124,39 @@ function WorkspaceBlockRenderer({
         : { notation: "compact" as const }),
       maximumFractionDigits: 1,
     });
+    const formatChartValue = (value: number | null) => value === null ? "Not available" : `${formatter.format(value)}${block.valueFormat === "percentage" ? "%" : ""}`;
     return (
       <article className="chart-card catalog-chart">
         <div className="card-heading">
           <div><strong>{block.title}</strong><span>{block.subtitle}</span></div>
           <span className="chart-kind">{block.variant}</span>
         </div>
-        {block.variant === "donut" ? (
+        {!block.items.length ? <p className="empty-table-cell" role="status">No matching data for this request.</p> : !block.items.some(item=>item.value!==null) ? <p className="empty-table-cell" role="status">No measure values are available for this request.</p> : block.variant === "donut" ? (
           <div className="catalog-donut-wrap">
             <div className="catalog-donut" style={{ background: `conic-gradient(${donutGradient || "#e8ebe3 0 100%"})` }}><span>{formatter.format(total)}</span></div>
-            <div className="catalog-donut-legend">{block.items.map((item, index) => <div key={`${item.label}-${index}`}><i style={{ background: palette[index % palette.length] }} /><span>{item.label}</span><strong>{formatter.format(item.value)}</strong></div>)}</div>
+            <div className="catalog-donut-legend">{block.items.map((item, index) => <div key={`${item.label}-${index}`}><i style={{ background: palette[index % palette.length] }} /><span>{item.label}</span><strong>{formatChartValue(item.value)}</strong></div>)}</div>
           </div>
         ) : block.variant === "line" ? (
           <div className="catalog-line-wrap">
             <svg viewBox="0 0 100 50" preserveAspectRatio="none" role="img" aria-label={block.title}>
-              <polyline points={block.items.map((item, index) => `${(index / Math.max(1, block.items.length - 1)) * 100},${48 - (item.value / maximum) * 44}`).join(" ")} />
+              <title>{block.title}: {block.items.map(item=>`${item.label}: ${formatChartValue(item.value)}`).join("; ")}</title>
+              {block.items.reduce<string[][]>((segments,item,index)=>{
+                if(item.value===null){if(segments.at(-1)?.length)segments.push([]);return segments;}
+                segments.at(-1)!.push(`${2+(index / Math.max(1,block.items.length-1))*96},${lineY(item.value)}`);return segments;
+              },[[]]).filter(segment=>segment.length).map((segment,index)=><polyline key={index} points={segment.join(" ")} />)}
+              {block.items.map((item,index)=>item.value===null?null:<circle key={item.label} cx={2+(index / Math.max(1,block.items.length-1))*96} cy={lineY(item.value)} r="0.8" fill="#79a93a"><title>{item.label}: {formatChartValue(item.value)}</title></circle>)}
             </svg>
-            <div>{block.items.map((item) => <span key={item.label}>{item.label}</span>)}</div>
+            <div>{block.items.map((item) => <span key={item.label}>{item.label}<br/><strong>{formatChartValue(item.value)}</strong></span>)}</div>
           </div>
         ) : (
           <div className="catalog-chart-grid bar">
             {block.items.map((item, index) => (
               <div className="catalog-chart-item" key={`${item.label}-${index}`}>
                 <span>{item.label}</span>
-                <div aria-label={`${item.label}: ${formatter.format(item.value)}`}>
-                  <i style={{ width: `${Math.max(6, (item.value / maximum) * 100)}%` }} />
+                <div aria-label={`${item.label}: ${formatChartValue(item.value)}`}>
+                  <i style={{ marginLeft: `${(item.value ?? 0) >= 0 ? (-minimum / range) * 100 : (((item.value ?? 0)-minimum)/range)*100}%`, width: `${(Math.abs(item.value ?? 0) / range) * 100}%` }} />
                 </div>
-                <strong>{formatter.format(item.value)}</strong>
+                <strong>{formatChartValue(item.value)}</strong>
               </div>
             ))}
           </div>
@@ -1348,6 +1358,7 @@ function renderTableCell(
   if (value === null || value === "") return <span className="empty-value">—</span>;
   const text = String(value);
 
+  if (format === "percentage") return `${Number(value).toFixed(2)}%`;
   if (format === "id") return <strong>{text}</strong>;
   if (format === "currency") {
     return new Intl.NumberFormat("en-IN", {

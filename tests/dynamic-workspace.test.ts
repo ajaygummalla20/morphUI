@@ -97,6 +97,7 @@ test("the AI planner can interpret new phrasing without adding prompt-specific c
         supported: true,
         intent: "endorsements",
         entity: "endorsements",
+        analysis: { metricId: "endorsement_count", time: null, comparison: "none" },
         title: "Unresolved endorsements by type",
         interpretation: "Pending endorsements grouped by change type in a summary table",
         fields: ["type", "premium_delta"],
@@ -134,6 +135,7 @@ test("an AI proposal cannot escape the approved semantic catalogue", async () =>
     insuranceSemanticCatalog,
     200,
     {
+      allowFallback: true,
       model: "test/model",
       generateProposal: async () => ({
         supported: true,

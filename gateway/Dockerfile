@@ -8,7 +8,7 @@ RUN cd gateway && npm ci --ignore-scripts \
     && ln -s /app/gateway/node_modules /app/node_modules
 COPY gateway/tsconfig.json ./gateway/tsconfig.json
 COPY gateway/src ./gateway/src
-COPY lib/gateway/contract.ts ./lib/gateway/contract.ts
+COPY lib/gateway/contract.ts lib/gateway/analysis.ts ./lib/gateway/
 COPY lib/catalog/semantic.ts ./lib/catalog/semantic.ts
 RUN cd gateway && npm run build
 

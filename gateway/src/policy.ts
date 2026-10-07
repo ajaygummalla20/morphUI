@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { validateAnalysis } from "../../lib/gateway/analysis.js";
 import {
   insuranceSemanticCatalog,
   semanticEntityNameSchema,
@@ -21,6 +22,7 @@ const entityPolicySchema = z
     groupBy: z.array(z.string().regex(/^[a-z0-9_]+$/)).max(10),
     sortBy: z.array(z.string().regex(/^[a-z0-9_]+$/)).max(20),
     maximumRows: z.number().int().min(1).max(200),
+    aggregateMetricIds: z.array(z.string().regex(/^[a-z0-9_]+$/)).max(12).default([]),
   })
   .strict();
 
@@ -108,6 +110,12 @@ export const gatewayPolicySchema = z
             code: "custom",
             message: `${semantic.entity} cannot group by ${field}.`,
           });
+        }
+      }
+      for (const metricId of entity.aggregateMetricIds) {
+        const metric = semantic.metrics.find(item => item.id === metricId);
+        if (!metric || (metric.field && (!allowedFields.has(metric.field) || policy.masking[metric.field]))) {
+          context.addIssue({ code: "custom", message: `${semantic.entity} contains an unapproved aggregate metric.` });
         }
       }
       for (const field of entity.sortBy) {
@@ -298,6 +306,23 @@ export function evaluatePolicy(
     );
   }
 
+  if (request.plan.analysis) {
+    const semantic = insuranceSemanticCatalog.entities.find(item => item.entity === request.plan.entity)!;
+    try {
+      validateAnalysis(request.plan, {
+        ...semantic,
+        analysisAllowed: true,
+        metrics: semantic.metrics.filter(item => entityPolicy.aggregateMetricIds.includes(item.id)),
+        fields: semantic.fields.filter(field => allowedFields.has(field.name)).map(field => ({
+          ...field, masked: Boolean(policy.masking[field.name]),
+          groupable: entityPolicy.groupBy.includes(field.name),
+          filterOperators: entityPolicy.filterOperators[field.name] ?? [],
+        })),
+      });
+    } catch {
+      return deny("filter_not_allowed", "This measure, date or grouping is not approved for analysis by the client policy.");
+    }
+  }
   return { allowed: true, groups, entityPolicy };
 }
 

@@ -6,6 +6,7 @@ import { insuranceSemanticCatalog } from "../../lib/catalog/semantic.js";
 import {
   GATEWAY_PROTOCOL_VERSION,
   gatewayAllowResponseSchema,
+  gatewayAggregateRowSchema,
   gatewayCatalogRequestSchema,
   gatewayCatalogResponseSchema,
   gatewayDenyResponseSchema,
@@ -201,6 +202,7 @@ async function handleCatalogDiscovery(
     const allowedFields = new Set(entityPolicy.fields);
     return {
       ...semantic,
+      analysisAllowed: entityPolicy.aggregateMetricIds.length > 0,
       schemaVerified:request.purpose !== 'runtime',
       source: entityPolicy.source,
       defaultFields: semantic.defaultFields.filter((field) => allowedFields.has(field)),
@@ -228,7 +230,7 @@ async function handleCatalogDiscovery(
           masked: Boolean(options.policy.masking[field.name]),
         })),
       metrics: semantic.metrics.filter(
-        (metric) => !metric.field || allowedFields.has(metric.field),
+        (metric) => (!metric.field || (allowedFields.has(metric.field) && !options.policy.masking[metric.field])) && (!entityPolicy.aggregateMetricIds.length || entityPolicy.aggregateMetricIds.includes(metric.id)),
       ),
       maximumRows: entityPolicy.maximumRows,
     };
@@ -416,7 +418,13 @@ async function handleExecution(
   try {
     const query = compileQuery(request.plan);
     const databaseRows = await options.execute(query);
-    const masked = applyMasking(databaseRows, request.plan, options.policy);
+    if (request.plan.analysis && databaseRows.length > request.plan.rowLimit) {
+      writeAuditEvent({ requestId: request.requestId, decisionId, decision: "deny", reasonCode: "row_limit_exceeded", organizationId: identity.organizationId, connectorId: request.connectorId, subjectId: identity.subjectId, entity: request.plan.entity, fieldCount: request.plan.fields.length, rowLimit: request.plan.rowLimit, policyVersion: options.policy.version, durationMs: Math.round(performance.now()-startedAt) }, options.config.auditHashSalt);
+      sendJson(response, 403, gatewayDenyResponseSchema.parse({ ...decisionBase, decision: "deny",
+        reasonCode: "row_limit_exceeded", reason: "The analysis has too many result groups. Choose a shorter period, coarser date interval or fewer categories." }));
+      return;
+    }
+    const masked = request.plan.analysis ? { rows: databaseRows.map(row => gatewayAggregateRowSchema.parse(row)), maskedFields: [] } : applyMasking(databaseRows, request.plan, options.policy);
     const allowed = gatewayAllowResponseSchema.parse({
       ...decisionBase,
       decision: "allow",
@@ -425,6 +433,7 @@ async function handleExecution(
       identityProvider: identity.identityProvider,
       identityIssuer: identity.issuer,
       identityExpiresAt: identity.expiresAt,
+      resultScope: request.plan.analysis ? "all_matching_records" : "returned_records",
       executedPlan: request.plan,
       rows: masked.rows,
       maskedFields: masked.maskedFields,
@@ -449,7 +458,7 @@ async function handleExecution(
       options.config.auditHashSalt,
     );
     sendJson(response, 200, allowed);
-  } catch (error) {
+  } catch {
     writeAuditEvent(
       {
         requestId: request.requestId,
@@ -467,7 +476,7 @@ async function handleExecution(
       },
       options.config.auditHashSalt,
     );
-    throw error;
+    throw new Error("Gateway execution failed.");
   }
 }
 

@@ -141,16 +141,16 @@ npm run test:app-state
 npm run test:db
 ```
 
-See `docs/gateway-protocol.md` for the Gateway v1.2 endpoint and trust model.
+See `docs/gateway-protocol.md` for the Gateway v1.3 endpoint and trust model.
 
-The v1.2 workspace engine is catalogue-driven. Gateway discovery returns the
+The v1.3 workspace engine is catalogue-driven. Gateway discovery returns the
 approved business vocabulary. A structured AI planner interprets each request
 into a typed data-and-presentation plan, and a deterministic validator rejects
 any entity, field, value, filter, grouping, metric or UI block outside that
 catalogue before the Gateway is called. The model receives the prompt and
 sanitized catalogue only; it never receives database credentials or customer
 result rows. When the model provider is unavailable, MorphUI uses a clearly
-identified deterministic fallback.
+identified deterministic fallback only when demo compatibility mode is explicitly enabled.
 
 Presentation instructions are part of the model-generated workspace plan rather
 than a fixed screen mapping. The planner may compose metrics, filters, charts,
@@ -165,7 +165,8 @@ OpenAI, select `MORPH_PLANNER_PROVIDER=openai`, an OpenAI model ID, and
 paid-provider switch. Keys are never exposed to the browser or committed to Git.
 Google free-tier testing should use synthetic prompts and catalogue metadata only.
 Requests have a 30-second deadline and at most one retry; quota or provider failures
-retain the explicitly identified deterministic fallback.
+return a safe, actionable error without querying records. Compatibility fallback requires
+`MORPH_ALLOW_RULE_BASED_PLANNER=true` and is restricted to explicit demo mode.
 
 ## Run the client Gateway locally
 
@@ -197,3 +198,24 @@ See `gateway/README.md` for the client installation and production hardening
 checklist. This first adapter supports the repository's insurance schema;
 additional industries will require explicit catalog adapters rather than raw
 SQL access.
+
+## Request understanding and analytical answers
+
+The AI chooses a record query or an approved complete-population analysis and
+its display blocks. Table-only requests cannot add charts or KPI cards. Growth
+uses approved dates and complete calendar intervals; missing/zero baselines have
+no invented percentages. Charts can show levels, absolute change or percentage
+change, while missing average periods remain unavailable and break the line.
+
+The current adapter supports policies, claims and endorsements (renewals are
+policy expiry queries), approved count/sum/average measures, a single date grain
+and optional category grouping. It does not promise to answer arbitrary joins,
+forecasts, writes or unavailable measures. Ambiguity returns a focused question;
+unsupported requests explain the limitation. AI configuration, credential, quota
+and timeout failures return actionable errors instead of substitute dashboards.
+
+Install the protocol 1.3 Gateway and approve its aggregateMetricIds alongside
+the updated app. Set a new provider key through the server's secret manager,
+then run `npm run planner:verify-live` to verify live model interpretation.
+Unit/integration checks use synthetic fixtures and mocked providers and do not
+establish live AI availability or a live customer database connection.

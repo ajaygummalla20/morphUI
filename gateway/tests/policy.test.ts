@@ -14,7 +14,7 @@ const policy = gatewayPolicySchema.parse(
 );
 
 const claimsRequest: GatewayExecuteRequest = {
-  protocolVersion: "1.2",
+  protocolVersion: "1.3",
   requestId: crypto.randomUUID(),
   connectorId: "connector_production_postgresql",
   identity: {

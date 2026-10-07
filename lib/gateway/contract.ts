@@ -6,8 +6,26 @@ import {
   semanticRelationshipSchema,
 } from "../catalog/semantic.js";
 
-export const GATEWAY_PROTOCOL_VERSION = "1.2" as const;
+export const GATEWAY_PROTOCOL_VERSION = "1.3" as const;
 export const MAX_GATEWAY_ROWS = 200;
+
+export const gatewayAnalysisSchema = z.object({
+  metricId: z.string().regex(/^[a-z0-9_]+$/),
+  time: z.object({
+    field: z.string().regex(/^[a-z0-9_]+$/),
+    grain: z.enum(["day", "week", "month", "year"]),
+    start: z.iso.date(),
+    end: z.iso.date(),
+  }).strict().nullable(),
+  comparison: z.enum(["none", "previous_bucket"]),
+}).strict();
+
+export const gatewayAggregateRowSchema = z.object({
+  bucket: z.iso.date().nullable(),
+  group: z.string().nullable(),
+  value: z.number().finite().nullable(),
+  record_count: z.number().int().nonnegative(),
+}).strict();
 
 const gatewayFilterSchema = z
   .object({
@@ -28,6 +46,7 @@ export const gatewayQueryPlanSchema = z
       .min(1)
       .max(30),
     filters: z.array(gatewayFilterSchema).max(12),
+    analysis: gatewayAnalysisSchema.optional(),
     groupBy: z.string().regex(/^[a-z0-9_]+$/).optional(),
     orderBy: z
       .array(
@@ -93,6 +112,7 @@ export const gatewayAllowResponseSchema = gatewayDecisionBaseSchema
     maskedFields: z.array(z.string().regex(/^[a-z0-9_]+$/)).max(30),
     returnedRows: z.number().int().min(0).max(MAX_GATEWAY_ROWS),
     maximumRows: z.number().int().min(1).max(MAX_GATEWAY_ROWS),
+    resultScope: z.enum(["returned_records", "all_matching_records"]).optional(),
   })
   .strict();
 
@@ -155,6 +175,8 @@ export const gatewayHealthResponseSchema = z
   .strict();
 
 export type GatewayQueryPlan = z.infer<typeof gatewayQueryPlanSchema>;
+export type GatewayAnalysis = z.infer<typeof gatewayAnalysisSchema>;
+export type GatewayAggregateRow = z.infer<typeof gatewayAggregateRowSchema>;
 export type GatewayIdentity = z.infer<typeof gatewayIdentitySchema>;
 export type GatewayExecuteRequest = z.infer<
   typeof gatewayExecuteRequestSchema

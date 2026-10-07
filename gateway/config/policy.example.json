@@ -35,6 +35,7 @@
         "propensity_score"
       ],
       "filterOperators": {
+        "start_date": ["between", "before", "after"],
         "expiry_date": ["between"],
         "total_premium": ["greater_than"],
         "status": ["equals", "in"],
@@ -46,6 +47,7 @@
       },
       "groupBy": ["product", "branch", "relationship_manager", "status", "renewal_status"],
       "sortBy": ["policy_number", "customer_name", "product", "branch", "relationship_manager", "start_date", "expiry_date", "total_premium", "status", "renewal_status", "propensity_score"],
+      "aggregateMetricIds": ["policy_count", "written_premium", "average_premium"],
       "maximumRows": 200
     },
     "claims": {
@@ -71,6 +73,7 @@
       },
       "groupBy": ["branch", "status", "cause"],
       "sortBy": ["claim_number", "policy_number", "customer_name", "branch", "intimation_date", "claimed_amount", "approved_amount", "status"],
+      "aggregateMetricIds": ["claim_count", "claim_exposure", "approved_amount"],
       "maximumRows": 200
     },
     "endorsements": {
@@ -96,6 +99,7 @@
       },
       "groupBy": ["type", "status", "branch"],
       "sortBy": ["endorsement_number", "policy_number", "customer_name", "type", "status", "requested_at", "effective_date", "premium_delta", "branch"],
+      "aggregateMetricIds": ["endorsement_count", "premium_impact", "average_impact"],
       "maximumRows": 200
     }
   },

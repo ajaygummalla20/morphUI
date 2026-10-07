@@ -1,3 +1,4 @@
+import { buildAnalysisWorkspace } from "./analysis";
 import { z } from "zod";
 import {
   buildRenewalWorkspaceResponse,
@@ -8,6 +9,7 @@ import type {
   GatewayAllowResponse,
   GatewayCatalogResponse,
   GatewayQueryPlan,
+  GatewayAnalysis,
 } from "@/lib/gateway/contract";
 import {
   insuranceSemanticCatalog,
@@ -35,7 +37,8 @@ export type TableCellFormat =
   | "currency"
   | "date"
   | "person"
-  | "badge";
+  | "badge"
+  | "percentage";
 
 export type WorkspaceVisualization = "bar" | "donut" | "line" | "table";
 export type WorkspaceBlockType = "metrics" | "filters" | "chart" | "table";
@@ -86,7 +89,7 @@ export type WorkspaceSpec = {
         title: string;
         subtitle: string;
         valueFormat: "currency" | "number" | "percentage";
-        items: Array<{ label: string; value: number }>;
+        items: Array<{ label: string; value: number | null }>;
       }
     | {
         type: "table";
@@ -153,6 +156,8 @@ export type WorkspacePlan = {
   source: string;
   fields: string[];
   filters: GatewayQueryPlan["filters"];
+  analysis?: GatewayAnalysis;
+  chartValue?: "value" | "change_amount" | "change_percent";
   groupBy?: string;
   orderBy: GatewayQueryPlan["orderBy"];
   metrics: SemanticMetric[];
@@ -200,15 +205,17 @@ export type EndorsementWorkspaceRow = {
 };
 
 export class UnsupportedWorkspaceRequestError extends Error {
-  readonly suggestions = [
+  readonly suggestions: string[];
+  private static readonly defaults = [
     "Show motor policies expiring in the next 15 days above ₹20,000",
     "Show high-value claims reported this month by branch",
     "Show pending endorsements grouped by type",
     "Show the active policy portfolio by product",
   ];
 
-  constructor(message="Ask about policies, claims, renewals, or endorsements.") {
-    super(message);
+  constructor(message?:string) {
+    super(message ?? "Ask about policies, claims, renewals, or endorsements.");
+    this.suggestions = message ? [] : UnsupportedWorkspaceRequestError.defaults;
   }
 }
 
@@ -332,6 +339,7 @@ export function createWorkspaceQueryPlan(
   return {
     source: plan.source,
     catalogVersion: plan.catalogVersion,
+    ...(plan.analysis ? { analysis: plan.analysis } : {}),
     operation: "select",
     entity: plan.entity,
     fields: plan.fields,
@@ -391,6 +399,7 @@ export function buildCatalogDrivenWorkspace(options: {
   sourceMode: WorkspaceSourceMode;
   generatedInMs: number;
 }): DynamicWorkspaceResponse {
+  if (options.plan.analysis) return buildAnalysisWorkspace(options);
   const { plan, entity } = options;
   const records = options.records.slice(0, plan.limit);
   const fieldMap = new Map(entity.fields.map((field) => [field.name, field]));
@@ -406,7 +415,7 @@ export function buildCatalogDrivenWorkspace(options: {
     return {
       label: metric.label,
       value: formatMetric(rawValue, metric.format),
-      delta: metric.description,
+      delta: `${metric.description} Based on the returned selection, capped at ${plan.limit} records.`,
       tone: (["lime", "orange", "blue"] as const)[index % 3],
     };
   });
@@ -474,7 +483,7 @@ export function buildCatalogDrivenWorkspace(options: {
       type: "chart",
       variant: plan.visualization === "table" ? "bar" : plan.visualization,
       title: `${amountField ? amountField.label : "Records"} by ${groupField?.label ?? "category"}`,
-      subtitle: `Built from ${entity.label.toLowerCase()} catalogue metadata`,
+      subtitle: `Returned selection only, capped at ${plan.limit} records.`,
       valueFormat: amountField?.format === "currency" ? "currency" : "number",
       items: chartItems,
     });

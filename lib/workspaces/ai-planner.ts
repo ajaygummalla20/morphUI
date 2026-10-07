@@ -2,6 +2,8 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { createGoogle } from "@ai-sdk/google";
 import { generateText, Output } from "ai";
 import { z } from "zod";
+import { gatewayAnalysisSchema } from "@/lib/gateway/contract";
+import { validateAnalysis } from "@/lib/gateway/analysis";
 import {
   semanticEntityNameSchema,
   semanticFilterOperatorSchema,
@@ -31,6 +33,8 @@ const aiFilterSchema = z
 
 export const aiWorkspaceProposalSchema = z
   .object({
+    analysis: gatewayAnalysisSchema.nullable().optional(),
+    chartValue: z.enum(["value", "change_amount", "change_percent"]).nullable().optional(),
     supported: z.boolean(),
     intent: z.enum(["renewals", "claims", "endorsements", "policies"]),
     entity: semanticEntityNameSchema,
@@ -64,6 +68,12 @@ export const aiWorkspaceProposalSchema = z
   })
   .strict();
 
+// OpenAI strict structured output requires every property, with null for absence.
+const providerProposalSchema = aiWorkspaceProposalSchema.extend({
+  analysis: gatewayAnalysisSchema.nullable(),
+  chartValue: z.enum(["value", "change_amount", "change_percent"]).nullable(),
+});
+
 export type AiWorkspaceProposal = z.infer<typeof aiWorkspaceProposalSchema>;
 
 export type WorkspacePlannerMetadata = {
@@ -89,6 +99,7 @@ type ProposalInput = {
 
 type PlannerOptions = {
   requireAi?:boolean;
+  allowFallback?:boolean;
   provider?: PlannerProvider;
   apiKey?: string;
   model?: string;
@@ -103,7 +114,7 @@ export async function planWorkspaceRequestWithAi(
 ): Promise<WorkspacePlannerResult> {
   const configuredProvider = options.provider ?? process.env.MORPH_PLANNER_PROVIDER ?? "openai";
   if (configuredProvider !== "openai" && configuredProvider !== "google") {
-    if (options.requireAi) throw new Error('AI planner is not configured.');
+    if (!options.allowFallback || options.requireAi) throw new WorkspacePlannerUnavailableError("not_configured");
     return fallbackPlan(prompt, catalog, requestedLimit, null, "ai_not_configured");
   }
   const provider = configuredProvider;
@@ -114,7 +125,7 @@ export async function planWorkspaceRequestWithAi(
   const enabled = Boolean(options.generateProposal) || process.env.MORPH_AI_PLANNER_ENABLED === "true";
 
   if (!enabled || (!options.generateProposal && !apiKey)) {
-    if (options.requireAi) throw new Error('AI planner is not configured.');
+    if (!options.allowFallback || options.requireAi) throw new WorkspacePlannerUnavailableError("not_configured");
     return fallbackPlan(prompt, catalog, requestedLimit, null, "ai_not_configured");
   }
 
@@ -125,6 +136,7 @@ export async function planWorkspaceRequestWithAi(
     const proposal = aiWorkspaceProposalSchema.parse(rawProposal);
     if (!proposal.supported) throw new UnsupportedWorkspaceRequestError(proposal.unsupportedReason || 'Please specify the dataset, filters and preferred view.');
 
+    assertPresentationPreference(prompt, proposal);
     return {
       plan: validateProposal(proposal, catalog, requestedLimit),
       planner: {
@@ -137,8 +149,8 @@ export async function planWorkspaceRequestWithAi(
   } catch (error) {
     if (error instanceof UnsupportedWorkspaceRequestError) throw error;
     const failureCode=classifyPlannerFailure(error);
-    console.warn(JSON.stringify({type:'morph_planner_fallback',failureCode}));
-    if(options.requireAi) throw new Error(`AI planner verification failed: ${failureCode}`);
+    console.warn(JSON.stringify({type:'morph_planner_failure',failureCode}));
+    if(!options.allowFallback || options.requireAi) throw new WorkspacePlannerUnavailableError(failureCode);
     const result=fallbackPlan(prompt, catalog, requestedLimit, model, "ai_plan_rejected");
     result.planner.failureCode=failureCode;
     result.planner.message=plannerFailureMessages[failureCode];
@@ -154,7 +166,7 @@ async function generateProposalWithModel(
   const provider = providerName === "google" ? createGoogle({ apiKey }) : createOpenAI({ apiKey });
   const result = await generateText({
     model: provider(input.model),
-    output: Output.object({ schema: aiWorkspaceProposalSchema }),
+    output: Output.object({ schema: providerProposalSchema }),
     abortSignal: AbortSignal.timeout(30_000),
     maxRetries: 1,
     system: buildPlannerInstructions(input.catalog),
@@ -189,6 +201,9 @@ function buildPlannerInstructions(catalog: SemanticCatalog) {
         label: field.label,
         description: field.description,
         semanticType: field.semanticType,
+        dataType: field.dataType,
+        aggregations: field.aggregations,
+        masked: field.masked,
         synonyms: field.synonyms,
         filterOperators: field.filterOperators,
         groupable: field.groupable,
@@ -196,6 +211,7 @@ function buildPlannerInstructions(catalog: SemanticCatalog) {
         allowedValues: field.allowedValues,
         valueSets: field.valueSets,
       })),
+      analysisAllowed: entity.analysisAllowed,
       metrics: entity.metrics,
     })),
     relationships: catalog.relationships,
@@ -205,10 +221,15 @@ function buildPlannerInstructions(catalog: SemanticCatalog) {
     "You are the semantic workspace planner for MorphUI.",
     "Understand the user's business question and presentation preference, then return only the typed plan.",
     "Use only entities, fields, operators, values, metrics, and relationships supplied in the approved catalogue.",
-    "Never create SQL, joins, fields, filter values, permissions, or calculations outside the catalogue.",
+    "Never create SQL, joins, fields, permissions, or calculations outside the catalogue. For fields with allowedValues, use only those values. For free-text filters, use exact values explicitly supplied by the user; never invent product, branch or manager names.",
     "The UI composition must fit the request instead of defaulting every request to the same dashboard.",
     "Use a records table for record-level lists, a grouped-summary table for grouped table requests, charts for comparisons or trends, metrics for headline totals, and multiple blocks only when a dashboard is requested or clearly useful.",
     "Honor explicit inclusion and exclusion instructions such as only, without, omit, concise, detailed, chart, table, cards, or dashboard.",
+    "For complete totals, counts, averages, grouped summaries, category comparisons or time trends, supply analysis with ONE approved metricId, optional time {field,grain:day|week|month|year,start,end}, and comparison:none|previous_bucket. This aggregates all matching records inside the Gateway before result limits. Set analysis=null for individual record lists. Never claim a record sample is a portfolio total.",
+    "Growth MUST use time buckets and comparison=previous_bucket, with complete calendar periods. For policy premium use total_premium and coverage start_date when approved, and explicitly state that date basis. If the user does not specify a period, ask which period to compare; never substitute expiry dates or a category comparison. For trends without a comparison you may show partial periods, explicitly described as such.",
+    "chartValue chooses the displayed measure: value for premium levels/ordinary totals, change_amount for absolute growth, change_percent for percentage growth. A chart-only request for growth must use change_amount or change_percent. Percentage growth must use change_percent; comparison=previous_bucket is mandatory for either change display. Undefined baselines appear as unavailable, never zero. Donut charts cannot display period changes or averages. For analysis tables use grouped_summary even when grouping by time rather than a category. For metrics blocks leave metricIds empty or choose only the analysis metric; do not request additional aggregations.",
+    "A line chart requires time analysis without an additional category grouping. Category comparisons use bar or donut charts. Donuts show nonnegative parts of one whole, not growth. For analysis use orderBy=[] and select measure/date/group source fields only. A grouped summary table must use analysis; record tables must use analysis=null. Do not silently turn a requested list plus full-population analytics into a grouped table: ask which view to prioritize.",
+    "If analysisAllowed=false, complete population analytics are unavailable: explain this rather than returning sampled totals. Only supported calculations are catalogue count, sum and average. Forecasts, ratios, multi-entity joins, writes and unavailable issuance-date analyses require a limitation or clarification, never fabricated data.",
     "For business terms such as pending or open, translate them through the catalogue's valueSets and return their concrete allowed values as a comma-separated `in` filter.",
     "For relative dates, use today's date and encode between filters as YYYY-MM-DD..YYYY-MM-DD (two dots between the dates).",
     "Set supported=false when the request cannot be represented by this catalogue; still populate all required fields with conservative catalogue values.",
@@ -268,17 +289,26 @@ export function validateProposal(
     return metric;
   });
   const blocks = Array.from(new Set(proposal.presentation.blocks)) as WorkspaceBlockType[];
-  if (blocks.includes("chart") && (!groupBy || proposal.visualization === "table")) {
+  if (blocks.includes("chart") && proposal.visualization === "line" && (!proposal.analysis?.time || groupBy)) {
+    throw new Error("A line trend requires time analysis without category grouping.");
+  }
+  if (blocks.includes("chart") && ((!groupBy && !proposal.analysis?.time) || proposal.visualization === "table")) {
     throw new Error("AI chart plans require an approved grouping and chart visualization.");
   }
-  if (proposal.presentation.tableLayout === "grouped_summary" && !groupBy) {
+  if (proposal.presentation.tableLayout === "grouped_summary" && !groupBy && !proposal.analysis) {
     throw new Error("AI grouped tables require an approved grouping field.");
+  }
+
+  if (!proposal.analysis && (blocks.includes("chart") || blocks.includes("metrics") || proposal.presentation.tableLayout === "grouped_summary")) {
+    throw new Error("Analytical views require a complete Gateway analysis rather than a record sample.");
   }
 
   const requiredFields = [
     ...proposal.fields,
     ...(groupBy ? [groupBy] : []),
     ...metrics.flatMap((metric) => metric.field ?? []),
+    ...(proposal.analysis?.time ? [proposal.analysis.time.field] : []),
+    ...(proposal.analysis ? entity.metrics.filter(metric => metric.id === proposal.analysis!.metricId).flatMap(metric => metric.field ?? []) : []),
   ];
   const fields = Array.from(new Set(requiredFields));
   if (!fields.length || fields.length > 30 || fields.some((field) => !fieldMap.has(field))) {
@@ -288,7 +318,9 @@ export function validateProposal(
   const days = inferDays(filters, entity);
   const minimumAmount = inferMinimumAmount(filters, entity);
 
-  return {
+  const plan: WorkspacePlan = {
+    ...(proposal.analysis ? { analysis: proposal.analysis } : {}),
+    chartValue: proposal.chartValue ?? "value",
     intent: proposal.intent,
     title: proposal.title,
     interpretation: proposal.interpretation,
@@ -310,6 +342,15 @@ export function validateProposal(
     minimumAmount,
     limit: Math.min(200, Math.max(1, requestedLimit), entity.maximumRows),
   };
+  if (proposal.chartValue && proposal.chartValue !== "value" && proposal.analysis?.comparison !== "previous_bucket") throw new Error("A change chart requires period comparisons.");
+  if (blocks.includes("chart") && proposal.visualization === "donut" && (proposal.chartValue && proposal.chartValue !== "value" || proposal.analysis?.comparison === "previous_bucket")) throw new Error("Growth cannot be displayed as parts of a whole.");
+  if (proposal.analysis) {
+    const {metric} = validateAnalysis({ ...plan, operation: "select", rowLimit: plan.limit }, entity);
+    if (blocks.includes("chart") && proposal.visualization === "donut" && metric.operation === "average") throw new Error("Averages do not form additive parts of a whole.");
+    if (blocks.includes("table") && proposal.presentation.tableLayout === "records") throw new Error("An aggregate answer cannot return individual records.");
+    if (proposal.metricIds.some(id => id !== proposal.analysis!.metricId)) throw new Error("An analysis returns only its selected metric.");
+  }
+  return plan;
 }
 
 function validateFilterValue(
@@ -373,9 +414,12 @@ const plannerFailureMessages = {
   authentication:'The AI provider rejected its credentials. Ask an administrator to check the server configuration.',
   quota:'The AI provider quota or rate limit was reached. Retry later.',
   timeout:'The AI provider took too long to respond. You can retry the request.',
-  invalid_plan:'The AI response did not pass catalogue validation. Review the basic interpretation before using it.',
+  invalid_plan:'The AI response could not be validated against the approved data and display format. Rephrase the request or specify its dataset, measure and period.',
   unavailable:'The AI provider is temporarily unavailable. You can retry shortly.',
 } as const;
+export class WorkspacePlannerUnavailableError extends Error {
+  constructor(readonly failureCode: keyof typeof plannerFailureMessages) { super(plannerFailureMessages[failureCode]); }
+}
 export function classifyPlannerFailure(error:unknown):keyof typeof plannerFailureMessages {
   let current=error;
   for(let depth=0;depth<4&&current&&typeof current==='object';depth++) {
@@ -388,4 +432,20 @@ export function classifyPlannerFailure(error:unknown):keyof typeof plannerFailur
     current=value.cause;
   }
   return 'invalid_plan';
+}
+
+// These are explicit display constraints, not business-intent routing. The model
+// still selects the catalogue entity, filters, measure, date basis and grouping.
+function assertPresentationPreference(prompt: string, proposal: AiWorkspaceProposal) {
+  const text = prompt.toLowerCase();
+  const only = /\b(?:normal\s+)?table\s+only\b|\bonly\s+(?:a\s+)?(?:normal\s+)?table\b|\bjust\s+(?:a\s+)?table\b/.test(text) ? "table"
+    : /\b(?:chart|graph)\s+only\b|\bonly\s+(?:a\s+)?(?:chart|graph)\b/.test(text) ? "chart"
+      : /\b(?:metrics?|kpis?)\s+only\b/.test(text) ? "metrics" : undefined;
+  if (proposal.presentation.blocks.includes("chart") && /\b(?:growth|increase|decrease|change)\b/.test(text) && /\b(?:percentage|percent)\b|%/.test(text) && proposal.chartValue !== "change_percent") throw new Error("The display must show the requested percentage change.");
+  if (only && (proposal.presentation.blocks.length !== 1 || proposal.presentation.blocks[0] !== only)) {
+    throw new Error("The proposed display format contradicts the explicit only instruction.");
+  }
+  if (/\b(?:no|without|omit|hide)\s+(?:charts?|graphs?)\b/.test(text) && proposal.presentation.blocks.includes("chart")) {
+    throw new Error("The request excludes charts.");
+  }
 }

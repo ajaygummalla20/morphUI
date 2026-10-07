@@ -81,10 +81,10 @@ test("the HTTP service authenticates, enforces policy and masks database rows", 
       headers: { Authorization: `Bearer ${token}` },
     });
     assert.equal(health.status, 200);
-    assert.equal((await health.json()).protocolVersion, "1.2");
+    assert.equal((await health.json()).protocolVersion, "1.3");
 
     const request: GatewayExecuteRequest = {
-      protocolVersion: "1.2",
+      protocolVersion: "1.3",
       requestId: crypto.randomUUID(),
       connectorId: "connector_production_postgresql",
       identity: {
@@ -127,7 +127,7 @@ test("the HTTP service authenticates, enforces policy and masks database rows", 
     assert.match(compiledSql, /cl\.claimed_amount > \$1/);
 
     const catalogRequest: GatewayCatalogRequest = {
-      protocolVersion: "1.2",
+      protocolVersion: "1.3",
       requestId: crypto.randomUUID(),
       connectorId: "connector_production_postgresql",
       identity: {
@@ -182,7 +182,7 @@ test("an unverified identity is denied before database execution", async () => {
 
   try {
     const request: GatewayExecuteRequest = {
-      protocolVersion: "1.2",
+      protocolVersion: "1.3",
       requestId: crypto.randomUUID(),
       connectorId: "connector_production_postgresql",
       identity: {
@@ -248,7 +248,7 @@ test("member catalog access separates runtime metadata from administrator onboar
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     body: JSON.stringify({
-      protocolVersion: "1.2", requestId: crypto.randomUUID(), connectorId: policy.connectorId,
+      protocolVersion: "1.3", requestId: crypto.randomUUID(), connectorId: policy.connectorId,
       purpose,
       identity: {
         organizationId: policy.organizationId,

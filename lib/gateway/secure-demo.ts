@@ -1,3 +1,4 @@
+import { validateAnalysis } from "./analysis";
 import {
   createDemoRows,
   type ClaimWorkspaceRow,
@@ -204,13 +205,21 @@ export function executeSecureDemoGateway(
     };
   }
 
+  if (request.plan.analysis) {
+    try { validateAnalysis(request.plan, semanticEntity!); }
+    catch { return { ...decisionBase, decision: "deny", reasonCode: "filter_not_allowed", reason: "The requested analysis is not approved." }; }
+  }
   const rows = queryDemoRows(encodeRows(workspacePlan), request.plan).map((row) =>
-    maskApprovedFields(row, demoPolicy.maskedFields),
+    request.plan.analysis ? row : maskApprovedFields(row, demoPolicy.maskedFields),
   );
 
+  if (request.plan.analysis && rows.length > request.plan.rowLimit) {
+    return { ...decisionBase, decision: "deny", reasonCode: "row_limit_exceeded", reason: "Choose fewer categories or a coarser date interval to return the complete analysis." };
+  }
   return {
     ...decisionBase,
     decision: "allow",
+    resultScope: request.plan.analysis ? "all_matching_records" : "returned_records",
     catalogVersion: demoPolicy.catalogVersion,
     identityVerified: true,
     identityProvider: "secure_demo",
@@ -218,7 +227,7 @@ export function executeSecureDemoGateway(
     identityExpiresAt: new Date(Date.now() + 5 * 60_000).toISOString(),
     executedPlan: request.plan,
     rows: rows.slice(0, request.plan.rowLimit),
-    maskedFields: [...demoPolicy.maskedFields].filter((field) =>
+    maskedFields: request.plan.analysis ? [] : [...demoPolicy.maskedFields].filter((field) =>
       request.plan.fields.includes(field),
     ),
     returnedRows: Math.min(rows.length, request.plan.rowLimit),
