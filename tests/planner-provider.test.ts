@@ -119,3 +119,26 @@ test("OpenAI receives a strict generation schema with required nullable analysis
     assert.match(JSON.stringify(format.schema.properties[field]), /"null"/, `${field} must allow null`);
   }
 });
+
+test('a transient Google service error is retried within the shared request deadline', async t => {
+  const previous = process.env.MORPH_AI_PLANNER_ENABLED;
+  process.env.MORPH_AI_PLANNER_ENABLED = 'true';
+  t.after(() => { if (previous === undefined) delete process.env.MORPH_AI_PLANNER_ENABLED; else process.env.MORPH_AI_PLANNER_ENABLED = previous; });
+  let calls = 0;
+  t.mock.method(globalThis, 'fetch', async () => {
+    calls++;
+    if (calls === 1) return Response.json({ error: { code: 503, status: 'UNAVAILABLE', message: 'Transient service error' } }, { status: 503 });
+    const proposal: AiWorkspaceProposal = {
+      supported: true, intent: 'endorsements', entity: 'endorsements',
+      title: 'Pending endorsements', interpretation: 'Pending requests grouped by type.',
+      fields: ['type'], filters: [{ field: 'status', operator: 'in', value: 'requested,documents_pending,under_review' }],
+      analysis: { metricId: 'endorsement_count', time: null, comparison: 'none' }, chartValue: null,
+      groupBy: 'type', orderBy: [], metricIds: [], visualization: 'table',
+      presentation: { blocks: ['table'], tableLayout: 'grouped_summary' }, unsupportedReason: '',
+    };
+    return Response.json({ candidates: [{ content: { role: 'model', parts: [{ text: JSON.stringify(proposal) }] }, finishReason: 'STOP' }] });
+  });
+  const result = await planWorkspaceRequestWithAi('Show pending endorsements grouped by type. Table only.', insuranceSemanticCatalog, 200, { provider: 'google', apiKey: 'test-only-google-key' });
+  assert.equal(result.planner.mode, 'ai');
+  assert.equal(calls, 2);
+});

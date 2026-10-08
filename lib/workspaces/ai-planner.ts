@@ -151,8 +151,8 @@ export async function planWorkspaceRequestWithAi(
       const failureCode = classifyPlannerFailure(error);
       const detail = safePlannerValidationFeedback(error);
       console.warn(JSON.stringify({ type: "morph_planner_failure", failureCode, stage, attempt: attempt + 1, detail }));
-      if (failureCode === "invalid_plan" && attempt === 0 && !signal.aborted) {
-        validationFeedback = detail;
+      if ((failureCode === "invalid_plan" || failureCode === "unavailable") && attempt === 0 && !signal.aborted) {
+        validationFeedback = failureCode === "invalid_plan" ? detail : undefined;
         continue;
       }
       if (!options.allowFallback || options.requireAi) throw new WorkspacePlannerUnavailableError(failureCode);
