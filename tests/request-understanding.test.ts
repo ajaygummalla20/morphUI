@@ -123,3 +123,58 @@ test("a valid table-only request preserves the exact presentation without added 
 test('explicit table-only instructions reject an otherwise valid chart proposal',async()=>{
  await assert.rejects(planWorkspaceRequestWithAi('Show pending endorsements grouped by type in a table only',insuranceSemanticCatalog,200,{generateProposal:async()=>({...tableProposal,visualization:'bar',presentation:{blocks:['chart'],tableLayout:'grouped_summary'}})}),/display format|validat/i);
 });
+
+test('the AI can correct a rejected plan using safe validation feedback', async () => {
+  let attempts = 0;
+  const result = await planWorkspaceRequestWithAi('Show pending endorsements grouped by type. Table only.', insuranceSemanticCatalog, 200, {
+    generateProposal: async (input) => {
+      attempts++;
+      if (attempts === 1) return { ...tableProposal, analysis: null };
+      assert.match(input.validationFeedback ?? '', /complete Gateway analysis/);
+      return tableProposal;
+    },
+  });
+  assert.equal(attempts, 2);
+  assert.equal(result.planner.mode, 'ai');
+  assert.deepEqual(result.plan.presentation.blocks, ['table']);
+  assert.equal(result.plan.analysis?.metricId, 'endorsement_count');
+});
+
+test('AI correction is bounded and never bypasses catalogue validation', async () => {
+  let attempts = 0;
+  const warnings: string[] = [];
+  const previousWarn = console.warn;
+  console.warn = (message: string) => warnings.push(message);
+  try {
+    await assert.rejects(planWorkspaceRequestWithAi('Show pending endorsements', insuranceSemanticCatalog, 200, {
+      generateProposal: async () => { attempts++; return { ...tableProposal, fields: ['private_unknown_field'] }; },
+    }), /validat/i);
+  } finally { console.warn = previousWarn; }
+  assert.equal(attempts, 2);
+  assert.ok(warnings.some(message => message.includes('AI selected fields outside the approved catalogue.')));
+  assert.ok(warnings.every(message => !message.includes('private_unknown_field')));
+});
+
+test('provider failures do not send private error text back to the model', async () => {
+  let attempts = 0;
+  await assert.rejects(planWorkspaceRequestWithAi('Show pending endorsements', insuranceSemanticCatalog, 200, {
+    generateProposal: async () => { attempts++; throw { statusCode: 429, message: 'secret-provider-text' }; },
+  }), /quota/i);
+  assert.equal(attempts, 1);
+});
+
+
+test('structured schema errors provide safe field-level correction feedback', async () => {
+  let attempts = 0;
+  const result = await planWorkspaceRequestWithAi('Show pending endorsements. Table only.', insuranceSemanticCatalog, 200, {
+    generateProposal: async input => {
+      attempts++;
+      if (attempts === 1) return { ...tableProposal, interpretation: 'sensitive-text'.repeat(30) };
+      assert.match(input.validationFeedback ?? '', /interpretation/);
+      assert.doesNotMatch(input.validationFeedback ?? '', /sensitive-text/);
+      return tableProposal;
+    },
+  });
+  assert.equal(result.planner.mode, 'ai');
+  assert.equal(attempts, 2);
+});

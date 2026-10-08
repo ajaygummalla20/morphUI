@@ -57,7 +57,7 @@ test("Gemini sends structured-output requests only to Google and validates the r
   const rejected = await planWorkspaceRequestWithAi("Show pending endorsements", insuranceSemanticCatalog, 200, options);
   assert.equal(rejected.planner.reason, "ai_plan_rejected");
   assert.equal(rejected.plan.fields.includes("bank_account_number"), false);
-  assert.equal(calls.length, 2);
+  assert.equal(calls.length, 3);
 });
 
 test("explicit compatibility mode labels Google authentication fallback without calling OpenAI", async (t) => {

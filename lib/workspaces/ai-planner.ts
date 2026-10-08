@@ -95,6 +95,7 @@ type ProposalInput = {
   catalog: SemanticCatalog;
   limit: number;
   model: string;
+  validationFeedback?: string;
 };
 
 type PlannerOptions = {
@@ -129,51 +130,59 @@ export async function planWorkspaceRequestWithAi(
     return fallbackPlan(prompt, catalog, requestedLimit, null, "ai_not_configured");
   }
 
-  try {
-    const rawProposal = options.generateProposal
-      ? await options.generateProposal({ prompt, catalog, limit: requestedLimit, model })
-      : await generateProposalWithModel({ prompt, catalog, limit: requestedLimit, model }, apiKey!, provider);
-    const proposal = aiWorkspaceProposalSchema.parse(rawProposal);
-    if (!proposal.supported) throw new UnsupportedWorkspaceRequestError(proposal.unsupportedReason || 'Please specify the dataset, filters and preferred view.');
-
-    assertPresentationPreference(prompt, proposal);
-    return {
-      plan: validateProposal(proposal, catalog, requestedLimit),
-      planner: {
-        mode: "ai",
-        model,
-        validated: true,
-        reason: "ai_plan",
-      },
-    };
-  } catch (error) {
-    if (error instanceof UnsupportedWorkspaceRequestError) throw error;
-    const failureCode=classifyPlannerFailure(error);
-    console.warn(JSON.stringify({type:'morph_planner_failure',failureCode}));
-    if(!options.allowFallback || options.requireAi) throw new WorkspacePlannerUnavailableError(failureCode);
-    const result=fallbackPlan(prompt, catalog, requestedLimit, model, "ai_plan_rejected");
-    result.planner.failureCode=failureCode;
-    result.planner.message=plannerFailureMessages[failureCode];
-    return result;
+  const signal = AbortSignal.timeout(30_000);
+  let validationFeedback: string | undefined;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    let stage: "generation" | "schema" | "validation" = "generation";
+    try {
+      const input = { prompt, catalog, limit: requestedLimit, model, validationFeedback };
+      const rawProposal = options.generateProposal
+        ? await options.generateProposal(input)
+        : await generateProposalWithModel(input, apiKey!, provider, signal);
+      stage = "schema";
+      const proposal = aiWorkspaceProposalSchema.parse(rawProposal);
+      if (!proposal.supported) throw new UnsupportedWorkspaceRequestError(proposal.unsupportedReason || 'Please specify the dataset, filters and preferred view.');
+      stage = "validation";
+      assertPresentationPreference(prompt, proposal);
+      const plan = validateProposal(proposal, catalog, requestedLimit);
+      return { plan, planner: { mode: "ai", model, validated: true, reason: "ai_plan" } };
+    } catch (error) {
+      if (error instanceof UnsupportedWorkspaceRequestError) throw error;
+      const failureCode = classifyPlannerFailure(error);
+      const detail = safePlannerValidationFeedback(error);
+      console.warn(JSON.stringify({ type: "morph_planner_failure", failureCode, stage, attempt: attempt + 1, detail }));
+      if (failureCode === "invalid_plan" && attempt === 0 && !signal.aborted) {
+        validationFeedback = detail;
+        continue;
+      }
+      if (!options.allowFallback || options.requireAi) throw new WorkspacePlannerUnavailableError(failureCode);
+      const result = fallbackPlan(prompt, catalog, requestedLimit, model, "ai_plan_rejected");
+      result.planner.failureCode = failureCode;
+      result.planner.message = plannerFailureMessages[failureCode];
+      return result;
+    }
   }
+  throw new WorkspacePlannerUnavailableError("invalid_plan");
 }
 
 async function generateProposalWithModel(
   input: ProposalInput,
   apiKey: string,
   providerName: PlannerProvider,
+  signal: AbortSignal,
 ): Promise<AiWorkspaceProposal> {
   const provider = providerName === "google" ? createGoogle({ apiKey }) : createOpenAI({ apiKey });
   const result = await generateText({
     model: provider(input.model),
     output: Output.object({ schema: providerProposalSchema }),
-    abortSignal: AbortSignal.timeout(30_000),
-    maxRetries: 1,
+    abortSignal: signal,
+    maxRetries: 0,
     system: buildPlannerInstructions(input.catalog),
     prompt: [
       `Today is ${new Date().toISOString().slice(0, 10)}.`,
       `Maximum rows: ${Math.min(200, Math.max(1, input.limit))}.`,
       `User request: ${input.prompt}`,
+      ...(input.validationFeedback ? [`Your previous proposal failed validation: ${input.validationFeedback}`, "Return a corrected plan for the SAME request. Do not weaken constraints, add unavailable fields, or change the requested format. If it cannot be represented, set supported=false and explain why."] : []),
     ].join("\n"),
     providerOptions: providerName === "openai" ? {
       openai: {
@@ -407,6 +416,56 @@ function fallbackPlan(
       message:reason==='ai_not_configured'?plannerFailureMessages.not_configured:plannerFailureMessages.invalid_plan,
     },
   };
+}
+
+// Only fixed application messages may enter logs or correction feedback. Provider
+// exceptions, Zod input values, and raw model output can contain sensitive text.
+const safeValidationMessages = new Set([
+  "AI intent does not match its selected catalogue entity.",
+  "AI selected a field that is not approved for grouping.",
+  "AI selected a filter outside the approved catalogue.",
+  "AI returned an invalid date range.",
+  "AI returned invalid or reversed date bounds.",
+  "AI selected a sort outside the approved catalogue.",
+  "AI selected a metric outside the approved catalogue.",
+  "A line trend requires time analysis without category grouping.",
+  "AI chart plans require an approved grouping and chart visualization.",
+  "AI grouped tables require an approved grouping field.",
+  "Analytical views require a complete Gateway analysis rather than a record sample.",
+  "AI selected fields outside the approved catalogue.",
+  "A change chart requires period comparisons.",
+  "Growth cannot be displayed as parts of a whole.",
+  "Averages do not form additive parts of a whole.",
+  "An aggregate answer cannot return individual records.",
+  "An analysis returns only its selected metric.",
+  "AI selected a categorical value outside the approved catalogue.",
+  "The display must show the requested percentage change.",
+  "The proposed display format contradicts the explicit only instruction.",
+  "The request excludes charts.",
+  "An analysis definition is required.",
+  "This analytic metric is not approved.",
+  "Analysis cannot use an unavailable or masked measure.",
+  "This calculation is not approved for the measure.",
+  "The analysis grouping is not approved.",
+  "Growth requires time buckets.",
+  "The analysis date is not approved.",
+  "Use an ordered analysis period of at most five years.",
+  "Growth comparisons require complete calendar periods.",
+  "Analyses use chronological or category order; record sorting is not applicable.",
+  "Invalid analysis date."
+]);
+function safePlannerValidationFeedback(error: unknown): string {
+  if (error instanceof Error && safeValidationMessages.has(error.message)) return error.message;
+  let current = error;
+  const keys = new Set([...Object.keys(aiWorkspaceProposalSchema.shape), "blocks", "tableLayout", "field", "operator", "value", "direction", "metricId", "time", "comparison", "grain", "start", "end"]);
+  for (let depth = 0; depth < 4 && current instanceof Error; depth++) {
+    if (current instanceof z.ZodError) {
+      const paths = current.issues.slice(0, 4).map(issue => issue.path.filter(part => typeof part === "string" && keys.has(part)).join(".") || "plan");
+      return `Schema constraints failed for: ${paths.join(", ")}. Use exactly the required schema, including length limits and null for absent optional values.`;
+    }
+    current = current.cause;
+  }
+  return "The response must match the complete structured plan schema and approved catalogue. Check required properties, nullable fields, field names, metric IDs, operators and requested presentation.";
 }
 
 const plannerFailureMessages = {
