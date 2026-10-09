@@ -75,11 +75,28 @@ test("requireAi still prevents fallback even when compatibility fallback was req
   );
 });
 
+test('the AI rechecks a refusal once without bypassing validation', async () => {
+  let attempts = 0;
+  const result = await planWorkspaceRequestWithAi('Show pending endorsements grouped by type. Table only.', insuranceSemanticCatalog, 200, {
+    generateProposal: async input => {
+      attempts++;
+      if (attempts === 1) return { ...tableProposal, supported: false, unsupportedReason: 'Grouping is unavailable.' };
+      assert.match(input.validationFeedback ?? '', /Recheck.*catalogue capabilities/);
+      assert.doesNotMatch(input.validationFeedback ?? '', /Grouping is unavailable/);
+      return tableProposal;
+    },
+  });
+  assert.equal(attempts, 2);
+  assert.equal(result.planner.mode, 'ai');
+  assert.equal(result.plan.analysis?.metricId, 'endorsement_count');
+});
+
 test("an ambiguous growth request surfaces the model's clarification even with fallback enabled", async () => {
+  let attempts = 0;
   const question = "Which period should I compare, and should premium use policy issue date or expiry date?";
   const options = {
     allowFallback: true,
-    generateProposal: async () => ({ ...tableProposal, supported: false, unsupportedReason: question }),
+    generateProposal: async () => { attempts++; return { ...tableProposal, supported: false, unsupportedReason: question }; },
   };
   await assert.rejects(
     planWorkspaceRequestWithAi("Show growth in premium", insuranceSemanticCatalog, 200, options),
@@ -89,6 +106,7 @@ test("an ambiguous growth request surfaces the model's clarification even with f
       return true;
     },
   );
+  assert.equal(attempts, 2);
 });
 
 test("a categorical line chart cannot masquerade as premium growth over time", () => {

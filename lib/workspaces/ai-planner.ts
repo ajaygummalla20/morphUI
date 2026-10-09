@@ -175,7 +175,13 @@ export async function planWorkspaceRequestWithAi(
         : await generateProposalWithModel(input, apiKey!, provider, signal);
       stage = "schema";
       const proposal = aiWorkspaceProposalSchema.parse(rawProposal);
-      if (!proposal.supported) throw new UnsupportedWorkspaceRequestError(proposal.unsupportedReason || 'Please specify the dataset, filters and preferred view.');
+      if (!proposal.supported) {
+        if (attempt === 0 && !signal.aborted) {
+          validationFeedback = "Recheck the SAME request against the catalogue capabilities before confirming unsupported. Relative date filters are supported by resolving today's date to absolute bounds; approved count/sum category analyses can use donuts. Do not invent capabilities, missing values or restrictions. If the requested data, operation or format is genuinely unavailable or ambiguous, keep supported=false and provide its limitation or clarification.";
+          continue;
+        }
+        throw new UnsupportedWorkspaceRequestError(proposal.unsupportedReason || 'Please specify the dataset, filters and preferred view.');
+      }
       stage = "validation";
       assertPresentationPreference(prompt, proposal);
       const plan = validateProposal(proposal, catalog, requestedLimit);
@@ -216,7 +222,7 @@ async function generateProposalWithModel(
       `Today is ${new Date().toISOString().slice(0, 10)}.`,
       `Maximum rows: ${Math.min(200, Math.max(1, input.limit))}.`,
       `User request: ${input.prompt}`,
-      ...(input.validationFeedback ? [`Your previous proposal failed validation: ${input.validationFeedback}`, "Return a corrected plan for the SAME request. Do not weaken constraints, add unavailable fields, or change the requested format. If it cannot be represented, set supported=false and explain why."] : []),
+      ...(input.validationFeedback ? [`Review feedback for your previous proposal: ${input.validationFeedback}`, "Return a corrected plan for the SAME request. Do not weaken constraints, add unavailable fields, or change the requested format. If it cannot be represented, set supported=false and explain why."] : []),
     ].join("\n"),
     providerOptions: providerName === "openai" ? {
       openai: {
@@ -279,7 +285,7 @@ function buildPlannerInstructions(catalog: SemanticCatalog) {
     "If analysisAllowed=false, complete population analytics are unavailable: explain this rather than returning sampled totals. Only supported calculations are catalogue count, sum and average. Forecasts, ratios, multi-entity joins, writes and unavailable issuance-date analyses require a limitation or clarification, never fabricated data.",
     "When groupBy is set and a table is requested, use grouped_summary with analysis. A records table does not render group headers; never return it while claiming grouped results. For a grouped list without a specified numeric measure, a catalogue count is appropriate; if the user explicitly wants individual records within groups, explain that limitation.",
     "For business terms such as pending or open, translate them through the catalogue's valueSets and return their concrete allowed values as a comma-separated `in` filter.",
-    "For relative dates, use today's date and encode between filters as YYYY-MM-DD..YYYY-MM-DD (two dots between the dates).",
+    "Relative dates are supported: resolve next N days to today's UTC date through today+N days, and previous N days to today-N through today. Encode between filters as YYYY-MM-DD..YYYY-MM-DD (two dots). A relative date filter does not require time bucketing; analysis.time=null for category grouping. Numeric filter values are numbers without currency symbols or thousands separators.",
     "Set supported=false when the request cannot be represented by this catalogue; still populate all required fields with conservative catalogue values.",
     "If a necessary dataset or measure is ambiguous, set supported=false and put one concise clarification question in unsupportedReason. Do not silently invent business intent.",
     `Approved catalogue: ${JSON.stringify(safeCatalog)}`,
