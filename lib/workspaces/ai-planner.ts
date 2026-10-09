@@ -82,14 +82,16 @@ function catalogueProposalSchema(catalog: SemanticCatalog, provider: PlannerProv
   if (!names.length) throw new Error("The approved catalogue has no fields.");
   const choices = (values: string[]) => z.enum(values as [string, ...string[]]);
   const fieldNames = choices(names);
+  const sortNames = [...new Set(fields.filter(field => field.sortable).map(field => field.name))];
   // Gemini rejects combinatorially complex enum schemas. Constrain the source
   // projection once, and validate every other catalogue reference locally.
   // Array/length limits remain in the canonical schema parsed after generation.
   if (provider === "google") return providerProposalSchema.extend({
-    fields: z.array(fieldNames),
+    fields: z.array(fieldNames).describe("Approved source-field projection; never metric IDs or virtual group/value/count columns."),
+    orderBy: z.array(z.object({ field: sortNames.length ? choices(sortNames) : fieldNames, direction: z.enum(["asc", "desc"]) }).strict()).describe("MUST be [] whenever analysis is non-null. Only individual records permit source-field sorting; never sort by a metric ID."),
+    analysis: providerProposalSchema.shape.analysis.describe("Required for charts, metrics and grouped summary tables. Use one approved metric ID, time=null for category comparisons. Records use null."),
   });
   const filterNames = [...new Set(fields.filter(field => field.filterOperators.length).map(field => field.name))];
-  const sortNames = [...new Set(fields.filter(field => field.sortable).map(field => field.name))];
   const groups = [...new Set(fields.filter(field => field.groupable && !field.masked).map(field => field.name))];
   const dates = [...new Set(fields.filter(field => field.dataType === "date" && !field.masked && field.filterOperators.includes("between")).map(field => field.name))];
   const metrics = [...new Set(catalog.entities.filter(entity => entity.analysisAllowed).flatMap(entity => entity.metrics.map(metric => metric.id)))];
@@ -505,6 +507,9 @@ const safeValidationMessages = new Set([
   "Invalid analysis date."
 ]);
 function safePlannerValidationFeedback(error: unknown): string {
+  if (error instanceof Error && (error.message === "AI selected a sort outside the approved catalogue." || error.message === "Analyses use chronological or category order; record sorting is not applicable.")) {
+    return "An analysis MUST use orderBy=[]: do not sort by metric IDs, result columns or source fields. Only individual record lists may sort approved sortable source fields.";
+  }
   if (error instanceof Error && safeValidationMessages.has(error.message)) return error.message;
   let current = error;
   const keys = new Set([...Object.keys(aiWorkspaceProposalSchema.shape), "blocks", "tableLayout", "field", "operator", "value", "direction", "metricId", "time", "comparison", "grain", "start", "end"]);

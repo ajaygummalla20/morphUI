@@ -58,7 +58,10 @@ test("Gemini sends structured-output requests only to Google and validates the r
     assert.ok(!fieldChoices.includes('record_count'));
     assert.ok(!fieldChoices.includes('premium'));
     assert.equal(wireSchema.properties.fields.maxItems, undefined, 'Gemini projection enum avoids multiplicative array bounds');
-    assert.equal(wireSchema.properties.filters.items.properties.field.enum, undefined, 'catalogue enums are not repeated in the Gemini wire schema');
+    assert.equal(wireSchema.properties.filters.items.properties.field.enum, undefined, 'catalogue enums are not repeated for every reference in the Gemini wire schema');
+    assert.equal(wireSchema.properties.orderBy.maxItems, undefined);
+    assert.ok(wireSchema.properties.orderBy.items.properties.field.enum.includes('total_premium'));
+    assert.ok(!wireSchema.properties.orderBy.items.properties.field.enum.includes('written_premium'));
     return Response.json({ candidates: [{ content: { role: "model", parts: [{ text: JSON.stringify({ ...proposal, chartValue: null }) }] }, finishReason: "STOP" }] });
   });
   const options = { allowFallback: true, provider: "google" as const, apiKey: "test-google-key" };
