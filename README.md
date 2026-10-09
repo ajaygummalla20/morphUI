@@ -158,12 +158,14 @@ record tables or grouped summary tables according to the user's request. Every
 proposed block is schema validated before rendering.
 
 Enable model planning by setting `MORPH_AI_PLANNER_ENABLED=true`. For Gemini testing,
-set `MORPH_PLANNER_PROVIDER=google`, `MORPH_PLANNER_MODEL=gemini-flash-latest`, and
+set `MORPH_PLANNER_PROVIDER=google`, `MORPH_PLANNER_MODEL=gemini-3.5-flash-lite`, and
 store `GOOGLE_GENERATIVE_AI_API_KEY` as a server-side secret. To switch back to
 OpenAI, select `MORPH_PLANNER_PROVIDER=openai`, an OpenAI model ID, and
 `OPENAI_API_KEY`. Only the selected provider is called; failures never trigger a
 paid-provider switch. Keys are never exposed to the browser or committed to Git.
 Google free-tier testing should use synthetic prompts and catalogue metadata only.
+Google planning defaults to the pinned Flash-Lite model with low thinking effort
+for interactive latency; this does not weaken catalogue or Gateway validation.
 Requests have a 30-second deadline and at most one retry; quota or provider failures
 return a safe, actionable error without querying records. Compatibility fallback requires
 `MORPH_ALLOW_RULE_BASED_PLANNER=true` and is restricted to explicit demo mode.

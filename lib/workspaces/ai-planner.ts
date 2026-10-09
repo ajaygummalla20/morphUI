@@ -19,7 +19,7 @@ import {
 
 const DEFAULT_PLANNER_MODELS = {
   openai: "gpt-5.6-luna",
-  google: "gemini-flash-latest",
+  google: "gemini-3.5-flash-lite",
 } as const;
 type PlannerProvider = keyof typeof DEFAULT_PLANNER_MODELS;
 
@@ -149,7 +149,7 @@ export async function planWorkspaceRequestWithAi(
     } catch (error) {
       if (error instanceof UnsupportedWorkspaceRequestError) throw error;
       const failureCode = classifyPlannerFailure(error);
-      const detail = safePlannerValidationFeedback(error);
+      const detail = failureCode === "invalid_plan" ? safePlannerValidationFeedback(error) : `AI provider request failed: ${failureCode}.`;
       console.warn(JSON.stringify({ type: "morph_planner_failure", failureCode, stage, attempt: attempt + 1, detail }));
       if ((failureCode === "invalid_plan" || failureCode === "unavailable") && attempt === 0 && !signal.aborted) {
         validationFeedback = failureCode === "invalid_plan" ? detail : undefined;
@@ -188,6 +188,8 @@ async function generateProposalWithModel(
       openai: {
         store: false,
       },
+    } : /^(?:gemini-3|gemini-flash-(?:lite-)?latest)/.test(input.model) ? {
+      google: { thinkingConfig: { thinkingLevel: "low" } },
     } : undefined,
   });
   return result.output;
@@ -239,6 +241,7 @@ function buildPlannerInstructions(catalog: SemanticCatalog) {
     "chartValue chooses the displayed measure: value for premium levels/ordinary totals, change_amount for absolute growth, change_percent for percentage growth. A chart-only request for growth must use change_amount or change_percent. Percentage growth must use change_percent; comparison=previous_bucket is mandatory for either change display. Undefined baselines appear as unavailable, never zero. Donut charts cannot display period changes or averages. For analysis tables use grouped_summary even when grouping by time rather than a category. For metrics blocks leave metricIds empty or choose only the analysis metric; do not request additional aggregations.",
     "A line chart requires time analysis without an additional category grouping. Category comparisons use bar or donut charts. Donuts show nonnegative parts of one whole, not growth. For analysis use orderBy=[] and select measure/date/group source fields only. A grouped summary table must use analysis; record tables must use analysis=null. Do not silently turn a requested list plus full-population analytics into a grouped table: ask which view to prioritize.",
     "If analysisAllowed=false, complete population analytics are unavailable: explain this rather than returning sampled totals. Only supported calculations are catalogue count, sum and average. Forecasts, ratios, multi-entity joins, writes and unavailable issuance-date analyses require a limitation or clarification, never fabricated data.",
+    "When groupBy is set and a table is requested, use grouped_summary with analysis. A records table does not render group headers; never return it while claiming grouped results. For a grouped list without a specified numeric measure, a catalogue count is appropriate; if the user explicitly wants individual records within groups, explain that limitation.",
     "For business terms such as pending or open, translate them through the catalogue's valueSets and return their concrete allowed values as a comma-separated `in` filter.",
     "For relative dates, use today's date and encode between filters as YYYY-MM-DD..YYYY-MM-DD (two dots between the dates).",
     "Set supported=false when the request cannot be represented by this catalogue; still populate all required fields with conservative catalogue values.",
@@ -306,6 +309,10 @@ export function validateProposal(
   }
   if (proposal.presentation.tableLayout === "grouped_summary" && !groupBy && !proposal.analysis) {
     throw new Error("AI grouped tables require an approved grouping field.");
+  }
+
+  if (groupBy && blocks.includes("table") && (!proposal.analysis || proposal.presentation.tableLayout !== "grouped_summary")) {
+    throw new Error("A grouped table requires complete Gateway analysis and grouped_summary layout; record tables do not render grouping.");
   }
 
   if (!proposal.analysis && (blocks.includes("chart") || blocks.includes("metrics") || proposal.presentation.tableLayout === "grouped_summary")) {
@@ -433,6 +440,7 @@ const safeValidationMessages = new Set([
   "AI grouped tables require an approved grouping field.",
   "Analytical views require a complete Gateway analysis rather than a record sample.",
   "AI selected fields outside the approved catalogue.",
+  "A grouped table requires complete Gateway analysis and grouped_summary layout; record tables do not render grouping.",
   "A change chart requires period comparisons.",
   "Growth cannot be displayed as parts of a whole.",
   "Averages do not form additive parts of a whole.",

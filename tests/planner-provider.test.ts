@@ -8,7 +8,7 @@ test("model date ranges are canonicalized and invalid calendar bounds rejected",
     supported: true, intent: "renewals", entity: "policies", title: "Renewals", interpretation: "Upcoming policies",
     fields: ["policy_number", "total_premium", "relationship_manager"],
     filters: [{ field: "expiry_date", operator: "between", value: "2026-09-16,2026-10-01" }],
-    groupBy: "relationship_manager", orderBy: [], metricIds: [], visualization: "donut",
+    groupBy: null, orderBy: [], metricIds: [], visualization: "table",
     presentation: { blocks: ["table"], tableLayout: "records" }, unsupportedReason: "",
   };
   const result = validateProposal(proposal, insuranceSemanticCatalog);
@@ -22,8 +22,12 @@ test("model date ranges are canonicalized and invalid calendar bounds rejected",
 
 test("Gemini sends structured-output requests only to Google and validates the result", async (t) => {
   const previous = process.env.MORPH_AI_PLANNER_ENABLED;
+  const previousModel = process.env.MORPH_PLANNER_MODEL;
+  delete process.env.MORPH_PLANNER_MODEL;
   process.env.MORPH_AI_PLANNER_ENABLED = "true";
   t.after(() => {
+    if (previousModel === undefined) delete process.env.MORPH_PLANNER_MODEL;
+    else process.env.MORPH_PLANNER_MODEL = previousModel;
     if (previous === undefined) delete process.env.MORPH_AI_PLANNER_ENABLED;
     else process.env.MORPH_AI_PLANNER_ENABLED = previous;
   });
@@ -40,16 +44,17 @@ test("Gemini sends structured-output requests only to Google and validates the r
   const calls: string[] = [];
   t.mock.method(globalThis, "fetch", async (url: string, init: RequestInit) => {
     calls.push(String(url));
-    assert.equal(String(url), "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent");
+    assert.equal(String(url), "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent");
     const headers = new Headers(init.headers);
     assert.equal(headers.get("x-goog-api-key"), "test-google-key");
     assert.equal(headers.has("authorization"), false);
     const body = JSON.parse(String(init.body));
+    assert.equal(body.generationConfig.thinkingConfig.thinkingLevel, "low");
     assert.equal(body.generationConfig.responseMimeType, "application/json");
     assert.ok(body.generationConfig.responseJsonSchema || body.generationConfig.responseSchema);
     return Response.json({ candidates: [{ content: { role: "model", parts: [{ text: JSON.stringify({ ...proposal, chartValue: null }) }] }, finishReason: "STOP" }] });
   });
-  const options = { allowFallback: true, provider: "google" as const, model: "gemini-flash-latest", apiKey: "test-google-key" };
+  const options = { allowFallback: true, provider: "google" as const, apiKey: "test-google-key" };
   const result = await planWorkspaceRequestWithAi("Show pending endorsements grouped by type in a table only", insuranceSemanticCatalog, 200, options);
   assert.equal(result.planner.mode, "ai");
   assert.deepEqual(result.plan.presentation.blocks, ["table"]);

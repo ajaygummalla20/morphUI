@@ -178,3 +178,10 @@ test('structured schema errors provide safe field-level correction feedback', as
   assert.equal(result.planner.mode, 'ai');
   assert.equal(attempts, 2);
 });
+
+test('a table grouping cannot be silently ignored by a records-only plan', () => {
+  assert.throws(() => validateProposal({
+    ...tableProposal, analysis: null,
+    presentation: { blocks: ['table'], tableLayout: 'records' },
+  }, insuranceSemanticCatalog), /grouped table|grouping/i);
+});
