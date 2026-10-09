@@ -51,7 +51,12 @@ test("Gemini sends structured-output requests only to Google and validates the r
     const body = JSON.parse(String(init.body));
     assert.equal(body.generationConfig.thinkingConfig.thinkingLevel, "low");
     assert.equal(body.generationConfig.responseMimeType, "application/json");
-    assert.ok(body.generationConfig.responseJsonSchema || body.generationConfig.responseSchema);
+    const wireSchema = body.generationConfig.responseJsonSchema || body.generationConfig.responseSchema;
+    assert.ok(wireSchema);
+    const fieldChoices = wireSchema.properties.fields.items.enum;
+    assert.deepEqual([...fieldChoices].sort(), [...new Set(insuranceSemanticCatalog.entities.flatMap(entity => entity.fields.map(field => field.name)))].sort());
+    assert.ok(!fieldChoices.includes('record_count'));
+    assert.ok(!fieldChoices.includes('premium'));
     return Response.json({ candidates: [{ content: { role: "model", parts: [{ text: JSON.stringify({ ...proposal, chartValue: null }) }] }, finishReason: "STOP" }] });
   });
   const options = { allowFallback: true, provider: "google" as const, apiKey: "test-google-key" };

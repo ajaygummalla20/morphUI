@@ -74,6 +74,34 @@ const providerProposalSchema = aiWorkspaceProposalSchema.extend({
   chartValue: z.enum(["value", "change_amount", "change_percent"]).nullable(),
 });
 
+// Constrain generation itself to approved names; the validator still checks
+// each selected entity and its permissions before any Gateway execution.
+function catalogueProposalSchema(catalog: SemanticCatalog) {
+  const fields = catalog.entities.flatMap(entity => entity.fields);
+  const names = [...new Set(fields.map(field => field.name))];
+  if (!names.length) throw new Error("The approved catalogue has no fields.");
+  const choices = (values: string[]) => z.enum(values as [string, ...string[]]);
+  const fieldNames = choices(names);
+  const filterNames = [...new Set(fields.filter(field => field.filterOperators.length).map(field => field.name))];
+  const sortNames = [...new Set(fields.filter(field => field.sortable).map(field => field.name))];
+  const groups = [...new Set(fields.filter(field => field.groupable && !field.masked).map(field => field.name))];
+  const dates = [...new Set(fields.filter(field => field.dataType === "date" && !field.masked && field.filterOperators.includes("between")).map(field => field.name))];
+  const metrics = [...new Set(catalog.entities.filter(entity => entity.analysisAllowed).flatMap(entity => entity.metrics.map(metric => metric.id)))];
+  const analysis = metrics.length ? gatewayAnalysisSchema.extend({
+    metricId: choices(metrics),
+    time: dates.length ? gatewayAnalysisSchema.shape.time.unwrap().extend({ field: choices(dates) }).nullable() : z.null(),
+  }).nullable() : z.null();
+  return providerProposalSchema.extend({
+    entity: choices(catalog.entities.map(entity => entity.entity)),
+    fields: z.array(fieldNames).min(1).max(30),
+    filters: z.array(aiFilterSchema.extend({ field: filterNames.length ? choices(filterNames) : fieldNames })).max(filterNames.length ? 12 : 0),
+    groupBy: groups.length ? choices(groups).nullable() : z.null(),
+    orderBy: z.array(z.object({ field: sortNames.length ? choices(sortNames) : fieldNames, direction: z.enum(["asc", "desc"]) }).strict()).max(sortNames.length ? 3 : 0),
+    metricIds: z.array(metrics.length ? choices(metrics) : fieldNames).max(metrics.length ? 6 : 0),
+    analysis,
+  });
+}
+
 export type AiWorkspaceProposal = z.infer<typeof aiWorkspaceProposalSchema>;
 
 export type WorkspacePlannerMetadata = {
@@ -170,11 +198,11 @@ async function generateProposalWithModel(
   apiKey: string,
   providerName: PlannerProvider,
   signal: AbortSignal,
-): Promise<AiWorkspaceProposal> {
+): Promise<unknown> {
   const provider = providerName === "google" ? createGoogle({ apiKey }) : createOpenAI({ apiKey });
   const result = await generateText({
     model: provider(input.model),
-    output: Output.object({ schema: providerProposalSchema }),
+    output: Output.object({ schema: catalogueProposalSchema(input.catalog) }),
     abortSignal: signal,
     maxRetries: 0,
     system: buildPlannerInstructions(input.catalog),
@@ -233,6 +261,8 @@ function buildPlannerInstructions(catalog: SemanticCatalog) {
     "Understand the user's business question and presentation preference, then return only the typed plan.",
     "Use only entities, fields, operators, values, metrics, and relationships supplied in the approved catalogue.",
     "Never create SQL, joins, fields, permissions, or calculations outside the catalogue. For fields with allowedValues, use only those values. For free-text filters, use exact values explicitly supplied by the user; never invent product, branch or manager names.",
+    "fields, filters.field, orderBy.field, groupBy and analysis.time.field must use source-field names from the selected entity, never metric IDs or virtual result columns such as record_count, group, bucket or value. For counts, select an approved identifier or grouping field; do not invent a count field.",
+    "Do not claim facts about returned values or group counts: you receive catalogue metadata, not records. For an approved donut count or sum, generate the requested plan; the renderer checks actual returned values. Never invent negative values or too-many-category objections before execution. Donuts still cannot show averages or period changes.",
     "The UI composition must fit the request instead of defaulting every request to the same dashboard.",
     "Use a records table for record-level lists, a grouped-summary table for grouped table requests, charts for comparisons or trends, metrics for headline totals, and multiple blocks only when a dashboard is requested or clearly useful.",
     "Honor explicit inclusion and exclusion instructions such as only, without, omit, concise, detailed, chart, table, cards, or dashboard.",
