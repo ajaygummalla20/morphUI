@@ -76,12 +76,18 @@ const providerProposalSchema = aiWorkspaceProposalSchema.extend({
 
 // Constrain generation itself to approved names; the validator still checks
 // each selected entity and its permissions before any Gateway execution.
-function catalogueProposalSchema(catalog: SemanticCatalog) {
+function catalogueProposalSchema(catalog: SemanticCatalog, provider: PlannerProvider) {
   const fields = catalog.entities.flatMap(entity => entity.fields);
   const names = [...new Set(fields.map(field => field.name))];
   if (!names.length) throw new Error("The approved catalogue has no fields.");
   const choices = (values: string[]) => z.enum(values as [string, ...string[]]);
   const fieldNames = choices(names);
+  // Gemini rejects combinatorially complex enum schemas. Constrain the source
+  // projection once, and validate every other catalogue reference locally.
+  // Array/length limits remain in the canonical schema parsed after generation.
+  if (provider === "google") return providerProposalSchema.extend({
+    fields: z.array(fieldNames),
+  });
   const filterNames = [...new Set(fields.filter(field => field.filterOperators.length).map(field => field.name))];
   const sortNames = [...new Set(fields.filter(field => field.sortable).map(field => field.name))];
   const groups = [...new Set(fields.filter(field => field.groupable && !field.masked).map(field => field.name))];
@@ -178,7 +184,7 @@ export async function planWorkspaceRequestWithAi(
       if (error instanceof UnsupportedWorkspaceRequestError) throw error;
       const failureCode = classifyPlannerFailure(error);
       const detail = failureCode === "invalid_plan" ? safePlannerValidationFeedback(error) : `AI provider request failed: ${failureCode}.`;
-      console.warn(JSON.stringify({ type: "morph_planner_failure", failureCode, stage, attempt: attempt + 1, detail }));
+      console.warn(JSON.stringify({ type: "morph_planner_failure", failureCode, stage, attempt: attempt + 1, detail, ...safeProviderDiagnostic(error) }));
       if ((failureCode === "invalid_plan" || failureCode === "unavailable") && attempt === 0 && !signal.aborted) {
         validationFeedback = failureCode === "invalid_plan" ? detail : undefined;
         continue;
@@ -202,7 +208,7 @@ async function generateProposalWithModel(
   const provider = providerName === "google" ? createGoogle({ apiKey }) : createOpenAI({ apiKey });
   const result = await generateText({
     model: provider(input.model),
-    output: Output.object({ schema: catalogueProposalSchema(input.catalog) }),
+    output: Output.object({ schema: catalogueProposalSchema(input.catalog, providerName) }),
     abortSignal: signal,
     maxRetries: 0,
     system: buildPlannerInstructions(input.catalog),
@@ -504,6 +510,19 @@ function safePlannerValidationFeedback(error: unknown): string {
     current = current.cause;
   }
   return "The response must match the complete structured plan schema and approved catalogue. Check required properties, nullable fields, field names, metric IDs, operators and requested presentation.";
+}
+
+// Provider diagnostics must never include response text, prompts or credentials.
+function safeProviderDiagnostic(error: unknown): { providerStatus?: number; providerSchemaRejected?: boolean } {
+  let current = error;
+  for (let depth = 0; depth < 4 && current && typeof current === "object"; depth++) {
+    const value = current as { statusCode?: number; message?: string; cause?: unknown };
+    if (Number.isInteger(value.statusCode) && value.statusCode! >= 400 && value.statusCode! <= 599) {
+      return { providerStatus: value.statusCode, ...(value.statusCode === 400 && typeof value.message === "string" && /schema|too many states/i.test(value.message) ? { providerSchemaRejected: true } : {}) };
+    }
+    current = value.cause;
+  }
+  return {};
 }
 
 const plannerFailureMessages = {
