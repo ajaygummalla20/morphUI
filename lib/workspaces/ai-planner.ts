@@ -169,12 +169,16 @@ export async function planWorkspaceRequestWithAi(
   const signal = AbortSignal.timeout(30_000);
   let validationFeedback: string | undefined;
   for (let attempt = 0; attempt < 2; attempt++) {
+    // Reserve half the total budget for recovery from one stalled provider call.
+    // The shared signal still caps both attempts, including validation correction.
+    const attemptSignal = AbortSignal.any([signal, AbortSignal.timeout(15_000)]);
+    const attemptStartedAt = performance.now();
     let stage: "generation" | "schema" | "validation" = "generation";
     try {
       const input = { prompt, catalog, limit: requestedLimit, model, validationFeedback };
       const rawProposal = options.generateProposal
         ? await options.generateProposal(input)
-        : await generateProposalWithModel(input, apiKey!, provider, signal);
+        : await generateProposalWithModel(input, apiKey!, provider, attemptSignal);
       stage = "schema";
       const proposal = aiWorkspaceProposalSchema.parse(rawProposal);
       if (!proposal.supported) {
@@ -192,8 +196,8 @@ export async function planWorkspaceRequestWithAi(
       if (error instanceof UnsupportedWorkspaceRequestError) throw error;
       const failureCode = classifyPlannerFailure(error);
       const detail = failureCode === "invalid_plan" ? safePlannerValidationFeedback(error) : `AI provider request failed: ${failureCode}.`;
-      console.warn(JSON.stringify({ type: "morph_planner_failure", failureCode, stage, attempt: attempt + 1, detail, ...safeProviderDiagnostic(error) }));
-      if ((failureCode === "invalid_plan" || failureCode === "unavailable") && attempt === 0 && !signal.aborted) {
+      console.warn(JSON.stringify({ type: "morph_planner_failure", failureCode, stage, attempt: attempt + 1, durationMs: Math.round(performance.now() - attemptStartedAt), detail, ...safeProviderDiagnostic(error) }));
+      if ((failureCode === "invalid_plan" || failureCode === "unavailable" || failureCode === "timeout") && attempt === 0 && !signal.aborted) {
         validationFeedback = failureCode === "invalid_plan" ? detail : undefined;
         continue;
       }

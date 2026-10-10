@@ -157,3 +157,63 @@ test('a transient Google service error is retried within the shared request dead
   assert.equal(result.planner.mode, 'ai');
   assert.equal(calls, 2);
 });
+
+test('a stalled Google call is aborted with retry time remaining and the second AI plan is validated', async t => {
+  const previous = process.env.MORPH_AI_PLANNER_ENABLED;
+  process.env.MORPH_AI_PLANNER_ENABLED = 'true';
+  t.after(() => { if (previous === undefined) delete process.env.MORPH_AI_PLANNER_ENABLED; else process.env.MORPH_AI_PLANNER_ENABLED = previous; });
+  const originalTimeout = AbortSignal.timeout.bind(AbortSignal);
+  const deadlines: number[] = [];
+  t.mock.method(AbortSignal, 'timeout', (ms: number) => {
+    deadlines.push(ms);
+    return originalTimeout(ms === 30_000 ? 1000 : 20);
+  });
+  let calls = 0;
+  t.mock.method(globalThis, 'fetch', async (_url: string, init: RequestInit) => {
+    calls++;
+    if (calls === 1) return new Promise<Response>((_resolve, reject) => {
+      assert.ok(init.signal);
+      init.signal.addEventListener('abort', () => reject(init.signal!.reason), { once: true });
+    });
+    const proposal: AiWorkspaceProposal = {
+      supported: true, intent: 'endorsements', entity: 'endorsements',
+      title: 'Pending endorsements', interpretation: 'Pending requests grouped by type.',
+      fields: ['type'], filters: [{ field: 'status', operator: 'in', value: 'requested,documents_pending,under_review' }],
+      analysis: { metricId: 'endorsement_count', time: null, comparison: 'none' }, chartValue: null,
+      groupBy: 'type', orderBy: [], metricIds: [], visualization: 'table',
+      presentation: { blocks: ['table'], tableLayout: 'grouped_summary' }, unsupportedReason: '',
+    };
+    return Response.json({ candidates: [{ content: { role: 'model', parts: [{ text: JSON.stringify(proposal) }] }, finishReason: 'STOP' }] });
+  });
+  // Keep the test event loop alive while native AbortSignal timers are unref'd.
+  const keepAlive = setInterval(() => {}, 50);
+  try {
+    const result = await planWorkspaceRequestWithAi('Show pending endorsements grouped by type. Table only.', insuranceSemanticCatalog, 200, { requireAi: true, provider: 'google', apiKey: 'test-only-google-key' });
+    assert.equal(result.planner.mode, 'ai');
+    assert.equal(result.plan.analysis?.metricId, 'endorsement_count');
+    assert.equal(calls, 2);
+    assert.deepEqual(deadlines, [30_000, 15_000, 15_000]);
+  } finally { clearInterval(keepAlive); }
+});
+
+test('two stalled calls exhaust the shared budget without a third call or a fallback plan', async t => {
+  const previous = process.env.MORPH_AI_PLANNER_ENABLED;
+  process.env.MORPH_AI_PLANNER_ENABLED = 'true';
+  t.after(() => { if (previous === undefined) delete process.env.MORPH_AI_PLANNER_ENABLED; else process.env.MORPH_AI_PLANNER_ENABLED = previous; });
+  const originalTimeout = AbortSignal.timeout.bind(AbortSignal);
+  t.mock.method(AbortSignal, 'timeout', (ms: number) => originalTimeout(ms === 30_000 ? 35 : 20));
+  let calls = 0;
+  t.mock.method(globalThis, 'fetch', async (_url: string, init: RequestInit) => {
+    calls++;
+    return new Promise<Response>((_resolve, reject) => {
+      assert.ok(init.signal);
+      if (init.signal.aborted) reject(init.signal.reason);
+      else init.signal.addEventListener('abort', () => reject(init.signal!.reason), { once: true });
+    });
+  });
+  const keepAlive = setInterval(() => {}, 50);
+  try {
+    await assert.rejects(planWorkspaceRequestWithAi('Show pending endorsements', insuranceSemanticCatalog, 200, { requireAi: true, allowFallback: true, provider: 'google', apiKey: 'test-only-google-key' }), /took too long/);
+    assert.equal(calls, 2);
+  } finally { clearInterval(keepAlive); }
+});
