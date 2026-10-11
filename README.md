@@ -221,3 +221,13 @@ the updated app. Set a new provider key through the server's secret manager,
 then run `npm run planner:verify-live` to verify live model interpretation.
 Unit/integration checks use synthetic fixtures and mocked providers and do not
 establish live AI availability or a live customer database connection.
+
+### Core prototype reliability benchmark
+
+`npm run planner:verify-live` scores 13 synthetic insurance requests, including table-only and chart-only displays, filters, grouped counts, percentage growth, ambiguous requests and prohibited/unavailable operations. It reports case IDs, safe failure descriptions and elapsed milliseconds, then exits nonzero if any case fails. A provider error never counts as a successful clarification. This is a quality test, not a hard-coded command router.
+
+By default it uses the server's configured AI credentials and tests planning/rendering only. To test a deployed API, set `MORPH_BENCHMARK_URL` to the generation endpoint and, for a private Sites deployment, pass its service credential through the `MORPH_BENCHMARK_TOKEN` environment variable. Never put credentials in command arguments, source files or reports. The deployed mode includes authorization, Gateway execution and rendering. Customer results are never included in its output.
+
+Opening the app does not invoke the AI automatically. Generation shows an elapsed-time indicator rather than simulated completed stages. Cancel stops the UI wait, suppresses stale responses and propagates cancellation to the pending planner where the hosting transport supports disconnect signals. A Gateway query already executing may still finish. Clarification messages retain the model's question; users edit their request instead of blindly retrying it.
+
+Existing PostgreSQL analytics tests verify arithmetic against fixtures: full-population totals before limits, percentage changes, missing buckets, undefined baselines, averages and category alignment. Passing the planner benchmark alone does not prove those calculations or guarantee provider availability.

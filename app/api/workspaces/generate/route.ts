@@ -26,6 +26,7 @@ export async function POST(request: Request) {
   const requestId = crypto.randomUUID();
 
   try {
+    request.signal.throwIfAborted();
     const session = await guardRequest(request,'generate','viewer',12);
     const actor = demoMode()?await ensureAppActor(request):session;
     const input = dynamicWorkspaceRequestSchema.parse(await readJsonLimited(request));
@@ -39,9 +40,10 @@ export async function POST(request: Request) {
       input.prompt,
       discovery.catalog,
       input.limit,
-      { allowFallback: demoMode() && process.env.MORPH_ALLOW_RULE_BASED_PLANNER === "true" },
+      { abortSignal: request.signal, allowFallback: demoMode() && process.env.MORPH_ALLOW_RULE_BASED_PLANNER === "true" },
     );
     const plan = plannerResult.plan;
+    request.signal.throwIfAborted();
     const queryPlan = createWorkspaceQueryPlan(plan);
     const catalogEntity = discovery.catalog.entities.find(
       (entity) => entity.entity === plan.entity,
@@ -86,6 +88,10 @@ export async function POST(request: Request) {
       },
     });
   } catch (error) {
+    if (request.signal.aborted) {
+      logOperation('generate',requestId,'cancelled',startedAt);
+      return Response.json({error:'Workspace generation was cancelled.',code:'workspace_cancelled'}, {status:499,headers:{'Cache-Control':'no-store'}});
+    }
     logOperation('generate',requestId,error instanceof SecurityError?error.code:error instanceof WorkspacePlannerUnavailableError?`ai_planner_${error.failureCode}`:'failed',startedAt);
     const denied=securityResponse(error); if (denied) return denied;
     if (error instanceof WorkspacePlannerUnavailableError) {

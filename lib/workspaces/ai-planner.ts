@@ -40,7 +40,7 @@ export const aiWorkspaceProposalSchema = z
     entity: semanticEntityNameSchema,
     title: z.string().min(1).max(100),
     interpretation: z.string().min(1).max(240),
-    fields: z.array(z.string().regex(/^[a-z0-9_]+$/)).min(1).max(30),
+    fields: z.array(z.string().regex(/^[a-z0-9_]+$/)).max(30),
     filters: z.array(aiFilterSchema).max(12),
     groupBy: z.string().regex(/^[a-z0-9_]+$/).nullable(),
     orderBy: z
@@ -101,7 +101,7 @@ function catalogueProposalSchema(catalog: SemanticCatalog, provider: PlannerProv
   }).nullable() : z.null();
   return providerProposalSchema.extend({
     entity: choices(catalog.entities.map(entity => entity.entity)),
-    fields: z.array(fieldNames).min(1).max(30),
+    fields: z.array(fieldNames).max(30),
     filters: z.array(aiFilterSchema.extend({ field: filterNames.length ? choices(filterNames) : fieldNames })).max(filterNames.length ? 12 : 0),
     groupBy: groups.length ? choices(groups).nullable() : z.null(),
     orderBy: z.array(z.object({ field: sortNames.length ? choices(sortNames) : fieldNames, direction: z.enum(["asc", "desc"]) }).strict()).max(sortNames.length ? 3 : 0),
@@ -135,6 +135,7 @@ type ProposalInput = {
 };
 
 type PlannerOptions = {
+  abortSignal?: AbortSignal;
   requireAi?:boolean;
   allowFallback?:boolean;
   provider?: PlannerProvider;
@@ -149,6 +150,7 @@ export async function planWorkspaceRequestWithAi(
   requestedLimit = 200,
   options: PlannerOptions = {},
 ): Promise<WorkspacePlannerResult> {
+  options.abortSignal?.throwIfAborted();
   const configuredProvider = options.provider ?? process.env.MORPH_PLANNER_PROVIDER ?? "openai";
   if (configuredProvider !== "openai" && configuredProvider !== "google") {
     if (!options.allowFallback || options.requireAi) throw new WorkspacePlannerUnavailableError("not_configured");
@@ -166,7 +168,8 @@ export async function planWorkspaceRequestWithAi(
     return fallbackPlan(prompt, catalog, requestedLimit, null, "ai_not_configured");
   }
 
-  const signal = AbortSignal.timeout(30_000);
+  const deadline = AbortSignal.timeout(30_000);
+  const signal = options.abortSignal ? AbortSignal.any([deadline, options.abortSignal]) : deadline;
   let validationFeedback: string | undefined;
   for (let attempt = 0; attempt < 2; attempt++) {
     // Reserve half the total budget for recovery from one stalled provider call.
@@ -179,6 +182,7 @@ export async function planWorkspaceRequestWithAi(
       const rawProposal = options.generateProposal
         ? await options.generateProposal(input)
         : await generateProposalWithModel(input, apiKey!, provider, attemptSignal);
+      options.abortSignal?.throwIfAborted();
       stage = "schema";
       const proposal = aiWorkspaceProposalSchema.parse(rawProposal);
       if (!proposal.supported) {
@@ -193,6 +197,7 @@ export async function planWorkspaceRequestWithAi(
       const plan = validateProposal(proposal, catalog, requestedLimit);
       return { plan, planner: { mode: "ai", model, validated: true, reason: "ai_plan" } };
     } catch (error) {
+      options.abortSignal?.throwIfAborted();
       if (error instanceof UnsupportedWorkspaceRequestError) throw error;
       const failureCode = classifyPlannerFailure(error);
       const detail = failureCode === "invalid_plan" ? safePlannerValidationFeedback(error) : `AI provider request failed: ${failureCode}.`;
@@ -292,8 +297,8 @@ function buildPlannerInstructions(catalog: SemanticCatalog) {
     "When groupBy is set and a table is requested, use grouped_summary with analysis. A records table does not render group headers; never return it while claiming grouped results. A bare 'show [entity] grouped by [field]' request is a supported grouped summary, not an explicit individual-record request. Use an approved count if no aggregate measure was requested; an amount threshold is a filter, not a request to sum that amount. Only explain the grouped-record limitation when the user explicitly asks for individual/each records inside groups. Do not infer that requirement merely from 'show policies', 'show claims' or a date/amount filter.",
     "For business terms such as pending or open, translate them through the catalogue's valueSets and return their concrete allowed values as a comma-separated `in` filter.",
     "Relative dates are supported: resolve next N days to today's UTC date through today+N days, and previous N days to today-N through today. Encode between filters as YYYY-MM-DD..YYYY-MM-DD (two dots). A relative date filter does not require time bucketing; analysis.time=null for category grouping. Numeric filter values are numbers without currency symbols or thousands separators.",
-    "Set supported=false when the request cannot be represented by this catalogue; still populate all required fields with conservative catalogue values.",
-    "If a necessary dataset or measure is ambiguous, set supported=false and put one concise clarification question in unsupportedReason. Do not silently invent business intent.",
+    "Set supported=false when the request cannot be represented by this catalogue; keep analysis=null and fields=[], filters=[], orderBy=[], metricIds=[] while populating the remaining required envelope fields with conservative values. Unsupported requests never execute a query.",
+    "Growth requires a date basis, bucket grain, and time range. When these are missing from the user request, ask a concise clarification instead of inventing recent months or year-to-date.\nIf a necessary dataset or measure is ambiguous, set supported=false and put one concise clarification question in unsupportedReason. Do not silently invent business intent.",
     `Approved catalogue: ${JSON.stringify(safeCatalog)}`,
   ].join("\n");
 }
@@ -374,6 +379,11 @@ export function validateProposal(
     ...(proposal.analysis?.time ? [proposal.analysis.time.field] : []),
     ...(proposal.analysis ? entity.metrics.filter(metric => metric.id === proposal.analysis!.metricId).flatMap(metric => metric.field ?? []) : []),
   ];
+  // COUNT(*) needs no source column, but the Gateway envelope requires a
+  // nonempty approved projection. It is not returned as a records view.
+  if (!requiredFields.length && proposal.analysis && entity.metrics.some(metric => metric.id === proposal.analysis!.metricId && metric.operation === "count")) {
+    requiredFields.push(entity.fields[0].name);
+  }
   const fields = Array.from(new Set(requiredFields));
   if (!fields.length || fields.length > 30 || fields.some((field) => !fieldMap.has(field))) {
     throw new Error("AI selected fields outside the approved catalogue.");

@@ -1,6 +1,5 @@
 "use client";
 
-import { animate, stagger } from "animejs";
 import {
   AnimatePresence,
   motion,
@@ -67,9 +66,11 @@ import type { SemanticCatalog } from "@/lib/catalog/semantic";
 import { escapeCsv } from "@/lib/workspaces/export";
 import { SessionGate, authenticatedFetch } from './components/session-gate';
 import { SavedWorkspaces } from './components/saved-workspaces';
+import { GenerationProgress } from './components/generation-progress';
+import { WorkspaceRequestError } from '@/lib/workspaces/client-error';
 
 type SectionId = "workspaces" | "sources" | "rules" | "audit";
-type GenerationPhase = "ready" | "understanding" | "checking" | "building";
+type GenerationPhase = "ready" | "understanding";
 type AppOverlay = "search" | "notifications" | "profile" | "organization" | null;
 type PersistenceMode = "connecting" | "cloud" | "device";
 type SavedWorkspace = SavedWorkspaceRecord;
@@ -140,8 +141,8 @@ function WorkspaceApp() {
   const [workspaceData, setWorkspaceData] =
     useState<DynamicWorkspaceResponse | null>(null);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
-  const [workspaceLoading, setWorkspaceLoading] = useState(true);
-  const assemblyRef = useRef<HTMLDivElement>(null);
+  const [workspaceLoading, setWorkspaceLoading] = useState(false);
+  const [needsClarification,setNeedsClarification]=useState(false);
   const requestSequence=useRef(0);
   const requestController=useRef<AbortController|null>(null);
   const reduceMotion = useReducedMotion();
@@ -206,55 +207,7 @@ function WorkspaceApp() {
     };
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-
-    const sequence=++requestSequence.current;
-    const controller=new AbortController();requestController.current=controller;
-    requestDynamicWorkspace(
-      "Show motor policies expiring in the next 15 days with premium above ₹20,000, grouped by relationship manager.",
-      controller.signal,
-    )
-      .then((response) => {
-        if (!cancelled && sequence===requestSequence.current) {
-          setWorkspaceData(response);
-          setWorkspaceError(null);
-        }
-      })
-      .catch(() => {
-        if (!cancelled && sequence===requestSequence.current) {
-          setWorkspaceError(
-            "No workspace response is available. Build a workspace or check your connector.",
-          );
-        }
-      })
-      .finally(() => {
-        if (!cancelled && sequence===requestSequence.current) setWorkspaceLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
-      controller.abort();
-    };
-  }, []);
-
-  useEffect(() => {
-    if (phase !== "building" || !assemblyRef.current || reduceMotion) return;
-    const animation = animate(
-      assemblyRef.current.querySelectorAll(".assembly-block"),
-      {
-        opacity: [0, 1],
-        translateY: [16, 0],
-        scale: [0.97, 1],
-        delay: stagger(95),
-        duration: 560,
-        ease: "out(3)",
-      },
-    );
-    return () => {
-      animation.cancel();
-    };
-  }, [phase, reduceMotion]);
+  useEffect(() => () => { requestSequence.current++; requestController.current?.abort(); }, []);
 
   const persistAction = async (
     action: AppStateAction,
@@ -278,6 +231,7 @@ function WorkspaceApp() {
     if (phase !== "ready") return;
     setSaved(false);
     setWorkspaceError(null);
+    setNeedsClarification(false);
     setWorkspaceLoading(true);
     setWorkspaceData(null);
     setPhase("understanding");
@@ -287,13 +241,7 @@ function WorkspaceApp() {
     try {
       const response = await requestDynamicWorkspace(prompt,controller.signal);
       if(sequence!==requestSequence.current)return;
-      setPhase("checking");
-      await wait(reduceMotion ? 80 : 720);
-      if(sequence!==requestSequence.current)return;
-      setPhase("building");
       setWorkspaceData(response);
-      await wait(reduceMotion ? 100 : 800);
-      if(sequence!==requestSequence.current)return;
       setPhase("ready");
       setToast(
         response.sourceMode === "client_gateway"
@@ -308,6 +256,7 @@ function WorkspaceApp() {
           : "We could not answer this request. Please retry.";
       setPhase("ready");
       setWorkspaceError(message);
+      setNeedsClarification(error instanceof WorkspaceRequestError && error.needsClarification);
       setWorkspaceData(null);
       setToast("Request needs attention — see the message above");
     } finally {
@@ -321,7 +270,14 @@ function WorkspaceApp() {
     setOverlay(null);
   };
 
+  const updatePrompt = (value: string) => {
+    requestSequence.current++; requestController.current?.abort();
+    setPrompt(value); setSaved(false); setWorkspaceData(null);
+    setPhase("ready"); setWorkspaceLoading(false); setWorkspaceError(null); setNeedsClarification(false);
+  };
+
   const saveCurrentWorkspace = async () => {
+    if (!workspaceData || workspaceLoading || phase !== "ready") return;
     const existing = savedWorkspaces.find((item) => item.prompt === prompt);
     if (existing) {
       setSaved(true);
@@ -419,15 +375,21 @@ function WorkspaceApp() {
     );
   };
 
+  const cancelWorkspace = () => {
+    requestSequence.current++; requestController.current?.abort();
+    setPhase("ready"); setSaved(false); setWorkspaceLoading(false); setWorkspaceError(null); setNeedsClarification(false);
+    setToast("Generation cancelled");
+  };
+
   const openSavedWorkspace = (item: SavedWorkspace) => {
     requestController.current?.abort();
     const sequence=++requestSequence.current;
     const controller=new AbortController();requestController.current=controller;
-    setPhase('ready');setWorkspaceError(null);
+    setPhase('understanding');setWorkspaceError(null);setNeedsClarification(false);
     setPrompt(item.prompt);
     setWorkspaceData(null);
     setWorkspaceLoading(true);
-    void requestDynamicWorkspace(item.prompt,controller.signal).then(data=>{if(sequence===requestSequence.current){setWorkspaceData(data);setWorkspaceError(null);}}).catch(error=>{if(sequence===requestSequence.current)setWorkspaceError(error instanceof Error?error.message:'Could not reopen workspace.');}).finally(()=>{if(sequence===requestSequence.current)setWorkspaceLoading(false);});
+    void requestDynamicWorkspace(item.prompt,controller.signal).then(data=>{if(sequence===requestSequence.current){setWorkspaceData(data);setWorkspaceError(null);}}).catch(error=>{if(sequence===requestSequence.current){setWorkspaceError(error instanceof Error?error.message:'Could not reopen workspace.');setNeedsClarification(error instanceof WorkspaceRequestError && error.needsClarification);}}).finally(()=>{if(sequence===requestSequence.current){setWorkspaceLoading(false);setPhase("ready");}});
     setSaved(true);
     chooseSection("workspaces");
     setToast(`Fetching fresh data for ${item.title}`);
@@ -578,13 +540,11 @@ function WorkspaceApp() {
             {section === "workspaces" && (
               <WorkspaceView
                 prompt={prompt}
-                setPrompt={(value) => {
-                  setPrompt(value);
-                  setSaved(false);
-                }}
+                setPrompt={updatePrompt}
                 phase={phase}
                 generateWorkspace={generateWorkspace}
-                assemblyRef={assemblyRef}
+                cancelWorkspace={cancelWorkspace}
+                needsClarification={needsClarification}
                 inspector={inspector}
                 setInspector={setInspector}
                 saved={saved}
@@ -646,8 +606,7 @@ function WorkspaceApp() {
             onClose={() => setOverlay(null)}
             onNavigate={chooseSection}
             onSelectPrompt={(value) => {
-              setPrompt(value);
-              setSaved(false);
+              updatePrompt(value);
               chooseSection("workspaces");
             }}
             savedWorkspaces={savedWorkspaces}
@@ -676,7 +635,8 @@ function WorkspaceView({
   setPrompt,
   phase,
   generateWorkspace,
-  assemblyRef,
+  cancelWorkspace,
+  needsClarification,
   inspector,
   setInspector,
   saved,
@@ -694,7 +654,8 @@ function WorkspaceView({
   setPrompt: (value: string) => void;
   phase: GenerationPhase;
   generateWorkspace: () => void;
-  assemblyRef: React.RefObject<HTMLDivElement | null>;
+  cancelWorkspace: () => void;
+  needsClarification: boolean;
   inspector: "safety" | "query";
   setInspector: (value: "safety" | "query") => void;
   saved: boolean;
@@ -708,7 +669,7 @@ function WorkspaceView({
   workspaceLoading: boolean;
   onOpenSources: () => void;
 }) {
-  const isGenerating = phase !== "ready";
+  const isGenerating = phase !== "ready" || workspaceLoading;
   const [filterOpen, setFilterOpen] = useState(false);
   const [filterText, setFilterText] = useState("");
   const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
@@ -728,6 +689,7 @@ function WorkspaceView({
         <button
           className={`secondary-button ${saved ? "saved" : ""}`}
           onClick={onSave}
+          disabled={!workspaceData || isGenerating}
         >
           {saved ? <Check size={15} /> : <Save size={15} />}
           {saved ? "Saved" : "Save workspace"}
@@ -740,6 +702,7 @@ function WorkspaceView({
           <label htmlFor="workspace-prompt">Describe your workspace</label>
           <textarea
             id="workspace-prompt"
+            disabled={isGenerating}
             value={prompt}
             onChange={(event) => setPrompt(event.target.value)}
             rows={2}
@@ -761,6 +724,7 @@ function WorkspaceView({
               {isGenerating ? <LoaderCircle className="spin" size={16} /> : <Play size={15} fill="currentColor" />}
               {isGenerating ? "Building" : "Build workspace"}
             </button>
+            {isGenerating && <button className="secondary-button" onClick={cancelWorkspace}>Cancel generation</button>}
           </div>
         </div>
       </section>
@@ -794,8 +758,8 @@ function WorkspaceView({
       {workspaceError && (
         <div className="workspace-alert" role="alert">
           <Database size={14} />
-          <span>{workspaceError}</span>
-          <button onClick={generateWorkspace}>Retry</button>
+          <div><strong>{needsClarification ? "Let’s clarify your request" : "Generation needs attention"}</strong><p>{workspaceError}</p>{needsClarification && <p>Edit the request above and select Build workspace.</p>}</div>
+          {!needsClarification && <button onClick={generateWorkspace}>Retry</button>}
         </div>
       )}
 
@@ -885,7 +849,7 @@ function WorkspaceView({
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0, scale: 0.99 }}
                 >
-                  <BuildSequence phase={phase} assemblyRef={assemblyRef} />
+                  <GenerationProgress />
                 </motion.div>
               ) : (
                 <motion.div
@@ -895,6 +859,7 @@ function WorkspaceView({
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.38 }}
                 >
+                  {!workspaceData && !workspaceError && <div className="build-sequence"><h2>Build your first workspace</h2><p>Describe the data, filters and format you need, or choose a suggestion above. Generation starts when you select Build workspace.</p></div>}
                   {workspaceSpec.blocks.map((block, index) => (
                     <WorkspaceBlockRenderer
                       key={`${workspaceData?.gateway?.decisionId ?? workspaceSpec.generatedIn}-${block.type}-${index}`}
@@ -1000,60 +965,6 @@ function WorkspaceView({
             )}
           </AnimatePresence>
         </aside>}
-      </div>
-    </div>
-  );
-}
-
-function BuildSequence({
-  phase,
-  assemblyRef,
-}: {
-  phase: GenerationPhase;
-  assemblyRef: React.RefObject<HTMLDivElement | null>;
-}) {
-  const steps = [
-    { id: "understanding", label: "Understanding the request", icon: Sparkles },
-    { id: "checking", label: "Checking access policy", icon: ShieldCheck },
-    { id: "building", label: "Assembling the interface", icon: Blocks },
-  ] as const;
-  const order = { understanding: 0, checking: 1, building: 2, ready: 3 };
-
-  return (
-    <div className="build-sequence">
-      <div className="build-status">
-        <motion.div
-          className="build-orb"
-          animate={{ rotate: 360 }}
-          transition={{ duration: 7, ease: "linear", repeat: Infinity }}
-        >
-          <WandSparkles size={25} />
-        </motion.div>
-        <div>
-          <span>Morph is working</span>
-          <strong>{steps.find((step) => step.id === phase)?.label}</strong>
-        </div>
-      </div>
-      <div className="build-steps">
-        {steps.map((step, index) => {
-          const Icon = step.icon;
-          const complete = order[phase] > index;
-          const active = order[phase] === index;
-          return (
-            <div key={step.id} className={`build-step ${complete ? "complete" : ""} ${active ? "active" : ""}`}>
-              <span>{complete ? <Check size={13} /> : <Icon size={14} />}</span>
-              {step.label}
-              {active && <LoaderCircle className="spin" size={14} />}
-            </div>
-          );
-        })}
-      </div>
-      <div className="assembly-canvas" ref={assemblyRef}>
-        <div className="assembly-block assembly-metric" />
-        <div className="assembly-block assembly-metric" />
-        <div className="assembly-block assembly-metric" />
-        <div className="assembly-block assembly-chart" />
-        <div className="assembly-block assembly-table" />
       </div>
     </div>
   );
@@ -1401,16 +1312,11 @@ async function requestDynamicWorkspace(
   });
   const payload = (await response.json()) as
     | DynamicWorkspaceResponse
-    | { error?: string; suggestions?: string[] };
+    | { error?: string; code?: string; suggestions?: string[] };
 
   if (!response.ok) {
-    const errorPayload = payload as { error?: string; suggestions?: string[] };
-    const guidance = errorPayload.suggestions?.slice(0, 2).join(" • ");
-    throw new Error(
-      guidance
-        ? `${errorPayload.error ?? "This request is not supported yet"} Try: ${guidance}`
-        : errorPayload.error ?? "The workspace could not be generated.",
-    );
+    const errorPayload = payload as { error?: string; code?: string };
+    throw new WorkspaceRequestError(errorPayload.error ?? "The workspace could not be generated.",errorPayload.code ?? "workspace_error");
   }
 
   return payload as DynamicWorkspaceResponse;
@@ -1471,10 +1377,6 @@ async function requestGatewayCatalog(): Promise<GatewayCatalogPayload> {
     );
   }
   return result;
-}
-
-function wait(milliseconds: number) {
-  return new Promise<void>((resolve) => window.setTimeout(resolve, milliseconds));
 }
 
 function selectPrimaryConnector(connectors: ConnectorRecord[]) {

@@ -203,3 +203,35 @@ test('a table grouping cannot be silently ignored by a records-only plan', () =>
     presentation: { blocks: ['table'], tableLayout: 'records' },
   }, insuranceSemanticCatalog), /grouped table|grouping/i);
 });
+
+test('a cancelled request never returns a workspace or starts a retry', async () => {
+  const controller = new AbortController();
+  let calls = 0;
+  await assert.rejects(planWorkspaceRequestWithAi('Show pending endorsements', insuranceSemanticCatalog, 200, {
+    abortSignal: controller.signal,
+    generateProposal: async () => { calls++; controller.abort(); return tableProposal; },
+  }), error => error instanceof Error && error.name === 'AbortError');
+  assert.equal(calls, 1);
+});
+
+test('an already cancelled request never calls the AI provider', async () => {
+  const controller = new AbortController(); controller.abort();
+  let calls = 0;
+  await assert.rejects(planWorkspaceRequestWithAi('Show pending endorsements', insuranceSemanticCatalog, 200, {
+    abortSignal: controller.signal, generateProposal: async () => { calls++; return tableProposal; },
+  }), error => error instanceof Error && error.name === 'AbortError');
+  assert.equal(calls, 0);
+});
+
+
+test("unsupported proposals with no projection return clarification, never provider failure", async () => {
+  await assert.rejects(planWorkspaceRequestWithAi("Delete policies", insuranceSemanticCatalog, 200, {
+    generateProposal: async () => ({...tableProposal, supported:false, fields:[], analysis:null, unsupportedReason:"Only read-only requests are supported."}),
+  }), UnsupportedWorkspaceRequestError);
+});
+
+test("a count-only metric can omit source fields without omitting the validated gateway projection", () => {
+  const plan=validateProposal({...tableProposal,intent:"policies",entity:"policies",fields:[],filters:[],groupBy:null,analysis:{metricId:"policy_count",time:null,comparison:"none"},presentation:{blocks:["metrics"],tableLayout:"grouped_summary"}},insuranceSemanticCatalog,200);
+  assert.ok(plan.fields.length>0);
+  assert.equal(plan.analysis?.metricId,"policy_count");
+});

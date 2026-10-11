@@ -9,3 +9,9 @@ test('an unconfigured planner endpoint returns actionable 503 and no unrelated d
  const response=await POST(new Request('https://morph.example/api/workspaces/generate',{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://morph.example'},body:JSON.stringify({prompt:'Show premium growth on policies as a line chart'})}));
  const body=await response.json();assert.equal(response.status,503);assert.equal(body.code,'ai_planner_not_configured');assert.match(body.error,/configur/i);assert.equal(body.spec,undefined);assert.equal(body.rows,undefined);
 });
+
+test('cancelled HTTP requests return no query plan or results',async()=>{
+ const controller=new AbortController();controller.abort();
+ const response=await POST(new Request('https://morph.example/api/workspaces/generate',{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://morph.example'},body:JSON.stringify({prompt:'Show all policies'}),signal:controller.signal}));
+ const body=await response.json();assert.equal(response.status,499);assert.equal(body.code,'workspace_cancelled');assert.equal(body.spec,undefined);assert.equal(body.queryPlan,undefined);
+});
