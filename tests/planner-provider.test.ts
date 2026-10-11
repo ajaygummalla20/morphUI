@@ -5,7 +5,7 @@ import { insuranceSemanticCatalog } from "../lib/catalog/semantic";
 
 test("model date ranges are canonicalized and invalid calendar bounds rejected", () => {
   const proposal: AiWorkspaceProposal = {
-    supported: true, intent: "renewals", entity: "policies", title: "Renewals", interpretation: "Upcoming policies",
+    changedFilterFields: [], supported: true, intent: "renewals", entity: "policies", title: "Renewals", interpretation: "Upcoming policies",
     fields: ["policy_number", "total_premium", "relationship_manager"],
     filters: [{ field: "expiry_date", operator: "between", value: "2026-09-16,2026-10-01" }],
     groupBy: null, orderBy: [], metricIds: [], visualization: "table",
@@ -32,7 +32,7 @@ test("Gemini sends structured-output requests only to Google and validates the r
     else process.env.MORPH_AI_PLANNER_ENABLED = previous;
   });
   const proposal = {
-    supported: true, intent: "endorsements", entity: "endorsements",
+    changedFilterFields: [], supported: true, intent: "endorsements", entity: "endorsements",
     analysis: { metricId: "endorsement_count", time: null, comparison: "none" },
     title: "Pending endorsements by type", interpretation: "Grouped table only",
     fields: ["type", "premium_delta"],
@@ -144,7 +144,7 @@ test('a transient Google service error is retried within the shared request dead
     calls++;
     if (calls === 1) return Response.json({ error: { code: 503, status: 'UNAVAILABLE', message: 'Transient service error' } }, { status: 503 });
     const proposal: AiWorkspaceProposal = {
-      supported: true, intent: 'endorsements', entity: 'endorsements',
+      changedFilterFields: [], supported: true, intent: 'endorsements', entity: 'endorsements',
       title: 'Pending endorsements', interpretation: 'Pending requests grouped by type.',
       fields: ['type'], filters: [{ field: 'status', operator: 'in', value: 'requested,documents_pending,under_review' }],
       analysis: { metricId: 'endorsement_count', time: null, comparison: 'none' }, chartValue: null,
@@ -176,7 +176,7 @@ test('a stalled Google call is aborted with retry time remaining and the second 
       init.signal.addEventListener('abort', () => reject(init.signal!.reason), { once: true });
     });
     const proposal: AiWorkspaceProposal = {
-      supported: true, intent: 'endorsements', entity: 'endorsements',
+      changedFilterFields: [], supported: true, intent: 'endorsements', entity: 'endorsements',
       title: 'Pending endorsements', interpretation: 'Pending requests grouped by type.',
       fields: ['type'], filters: [{ field: 'status', operator: 'in', value: 'requested,documents_pending,under_review' }],
       analysis: { metricId: 'endorsement_count', time: null, comparison: 'none' }, chartValue: null,

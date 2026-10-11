@@ -1,3 +1,4 @@
+import {workspaceContextSchema} from "./context";
 import { buildAnalysisWorkspace } from "./analysis";
 import { z } from "zod";
 import {
@@ -22,6 +23,7 @@ export const dynamicWorkspaceRequestSchema = z
   .object({
     prompt: z.string().trim().min(8).max(500),
     limit: z.number().int().min(1).max(200).default(200),
+    context: workspaceContextSchema.optional(),
   })
   .strict();
 
@@ -89,7 +91,7 @@ export type WorkspaceSpec = {
         title: string;
         subtitle: string;
         valueFormat: "currency" | "number" | "percentage";
-        items: Array<{ label: string; value: number | null }>;
+        items: Array<{ label: string; value: number | null; drilldownValue?: string }>;
       }
     | {
         type: "table";
@@ -109,6 +111,7 @@ export type WorkspaceSpec = {
 export type WorkspaceQueryPlan = GatewayQueryPlan;
 
 export type DynamicWorkspaceResponse = {
+  chartValue?: "value" | "change_amount" | "change_percent";
   intent: WorkspaceIntent;
   interpretation: string;
   sourceMode: WorkspaceSourceMode;

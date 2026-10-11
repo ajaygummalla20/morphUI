@@ -67,6 +67,9 @@ import { escapeCsv } from "@/lib/workspaces/export";
 import { SessionGate, authenticatedFetch } from './components/session-gate';
 import { SavedWorkspaces } from './components/saved-workspaces';
 import { GenerationProgress } from './components/generation-progress';
+import {DemoGuide} from './components/demo-guide';
+import {WorkspaceConversation,RequestInterpretation} from './components/workspace-conversation';
+import {contextFromResponse,type WorkspaceContext} from '@/lib/workspaces/context';
 import { WorkspaceRequestError } from '@/lib/workspaces/client-error';
 
 type SectionId = "workspaces" | "sources" | "rules" | "audit";
@@ -143,6 +146,11 @@ function WorkspaceApp() {
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [workspaceLoading, setWorkspaceLoading] = useState(false);
   const [needsClarification,setNeedsClarification]=useState(false);
+  const [showGuide,setShowGuide]=useState(false);
+  const [presentationMode,setPresentationMode]=useState(false);
+  const [resultPrompt,setResultPrompt]=useState("");
+  const [retryContext,setRetryContext]=useState<WorkspaceContext|undefined>();
+  const [retryPrompt,setRetryPrompt]=useState<string|undefined>();
   const requestSequence=useRef(0);
   const requestController=useRef<AbortController|null>(null);
   const reduceMotion = useReducedMotion();
@@ -227,8 +235,11 @@ function WorkspaceApp() {
     }
   };
 
-  const generateWorkspace = async () => {
+  const generateWorkspace = async (followup?: string, context?: WorkspaceContext, displayPrompt?:string) => {
     if (phase !== "ready") return;
+    const requestPrompt=followup ?? prompt;
+    setRetryContext(context);setRetryPrompt(requestPrompt);
+    if(followup)setPrompt(displayPrompt??followup);
     setSaved(false);
     setWorkspaceError(null);
     setNeedsClarification(false);
@@ -239,9 +250,11 @@ function WorkspaceApp() {
     const sequence=++requestSequence.current;
     const controller=new AbortController();requestController.current=controller;
     try {
-      const response = await requestDynamicWorkspace(prompt,controller.signal);
+      const response = await requestDynamicWorkspace(requestPrompt,controller.signal,context);
       if(sequence!==requestSequence.current)return;
       setWorkspaceData(response);
+      setResultPrompt(displayPrompt??requestPrompt);
+      setRetryContext(context ? contextFromResponse(response) : undefined);
       setPhase("ready");
       setToast(
         response.sourceMode === "client_gateway"
@@ -270,15 +283,16 @@ function WorkspaceApp() {
     setOverlay(null);
   };
 
-  const updatePrompt = (value: string) => {
+  const updatePrompt = (value: string, preserveContext=false) => {
     requestSequence.current++; requestController.current?.abort();
-    setPrompt(value); setSaved(false); setWorkspaceData(null);
+    setPrompt(value); setSaved(false); setWorkspaceData(null); setRetryPrompt(undefined);if(!preserveContext)setRetryContext(undefined);
     setPhase("ready"); setWorkspaceLoading(false); setWorkspaceError(null); setNeedsClarification(false);
   };
 
   const saveCurrentWorkspace = async () => {
-    if (!workspaceData || workspaceLoading || phase !== "ready") return;
-    const existing = savedWorkspaces.find((item) => item.prompt === prompt);
+    if (!workspaceData || workspaceLoading || phase !== "ready" || resultPrompt!==prompt) return;
+    const saveSequence=requestSequence.current;
+    const existing = savedWorkspaces.find((item) => item.prompt === prompt && JSON.stringify(item.definition) === JSON.stringify(workspaceData ? contextFromResponse(workspaceData) : undefined));
     if (existing) {
       setSaved(true);
       setToast("This workspace is already saved");
@@ -288,6 +302,7 @@ function WorkspaceApp() {
     const item: SavedWorkspace = {
       id: crypto.randomUUID(),
       title: workspaceSpec.title,
+      definition:contextFromResponse(workspaceData),
       prompt,
       savedAt: new Date().toISOString(),
       data: null,
@@ -298,7 +313,7 @@ function WorkspaceApp() {
     const cloudSaved = await persistAction(
       { action: "save_workspace", workspace: item },
     );
-    if (cloudSaved) {setSavedWorkspaces(next);setSaved(true);}
+    if (cloudSaved) {setSavedWorkspaces(next);if(saveSequence===requestSequence.current)setSaved(true);}
     setToast(
       cloudSaved
         ? "Workspace saved to Morph cloud"
@@ -386,17 +401,17 @@ function WorkspaceApp() {
     const sequence=++requestSequence.current;
     const controller=new AbortController();requestController.current=controller;
     setPhase('understanding');setWorkspaceError(null);setNeedsClarification(false);
-    setPrompt(item.prompt);
+    setPrompt(item.prompt);setRetryContext(item.definition);setRetryPrompt(item.definition ? "Refresh this workspace without changing its query or display." : item.prompt);
     setWorkspaceData(null);
     setWorkspaceLoading(true);
-    void requestDynamicWorkspace(item.prompt,controller.signal).then(data=>{if(sequence===requestSequence.current){setWorkspaceData(data);setWorkspaceError(null);}}).catch(error=>{if(sequence===requestSequence.current){setWorkspaceError(error instanceof Error?error.message:'Could not reopen workspace.');setNeedsClarification(error instanceof WorkspaceRequestError && error.needsClarification);}}).finally(()=>{if(sequence===requestSequence.current){setWorkspaceLoading(false);setPhase("ready");}});
+    void requestDynamicWorkspace(item.definition ? 'Refresh this workspace without changing its query or display.' : item.prompt,controller.signal,item.definition).then(data=>{if(sequence===requestSequence.current){setWorkspaceData(data);setResultPrompt(item.prompt);setWorkspaceError(null);}}).catch(error=>{if(sequence===requestSequence.current){setWorkspaceError(error instanceof Error?error.message:'Could not reopen workspace.');setNeedsClarification(error instanceof WorkspaceRequestError && error.needsClarification);}}).finally(()=>{if(sequence===requestSequence.current){setWorkspaceLoading(false);setPhase("ready");}});
     setSaved(true);
     chooseSection("workspaces");
     setToast(`Fetching fresh data for ${item.title}`);
   };
 
   return (
-    <main className="app-shell">
+    <main className={`app-shell ${presentationMode ? "presentation-mode" : ""}`}>
       <div className="ambient ambient-one" />
       <div className="ambient ambient-two" />
 
@@ -506,6 +521,8 @@ function WorkspaceApp() {
             </div>
           </div>
           <div className="topbar-actions">
+            <button className="secondary-button" aria-pressed={showGuide} onClick={()=>{setShowGuide(value=>!value);chooseSection("workspaces");}}>Guided demo</button>
+            <button className="secondary-button" aria-pressed={presentationMode} onClick={()=>{setPresentationMode(value=>!value);chooseSection("workspaces");}}>{presentationMode ? "Exit presentation" : "Present"}</button>
             <div className={`persistence-pill ${persistenceMode}`}>
               {persistenceMode === "cloud" ? (
                 <><CheckCircle2 size={13} /> Cloud saved</>
@@ -536,13 +553,17 @@ function WorkspaceApp() {
             exit={reduceMotion ? undefined : { opacity: 0, y: -6 }}
             transition={{ duration: 0.24 }}
           >
+            {section === 'workspaces' && showGuide && <DemoGuide busy={workspaceLoading} onSelect={updatePrompt}/> }
             {section === 'workspaces' && <SavedWorkspaces items={savedWorkspaces} onOpen={openSavedWorkspace} onRefresh={async()=>{const state=await requestAppStateBootstrap();setSavedWorkspaces(state.savedWorkspaces);}} />}
             {section === "workspaces" && (
               <WorkspaceView
                 prompt={prompt}
-                setPrompt={updatePrompt}
+                setPrompt={value=>updatePrompt(value,true)}
+                onNewPrompt={updatePrompt}
+                hasContext={!!retryContext}
                 phase={phase}
-                generateWorkspace={generateWorkspace}
+                generateWorkspace={()=>{void generateWorkspace(workspaceData ? "Refresh this workspace without changing its query or display." : retryPrompt,workspaceData ? contextFromResponse(workspaceData) : retryContext,prompt);}}
+                onFollowup={value=>{if(workspaceData)void generateWorkspace(value,contextFromResponse(workspaceData));}}
                 cancelWorkspace={cancelWorkspace}
                 needsClarification={needsClarification}
                 inspector={inspector}
@@ -633,8 +654,11 @@ function WorkspaceApp() {
 function WorkspaceView({
   prompt,
   setPrompt,
+  onNewPrompt,
+  hasContext,
   phase,
   generateWorkspace,
+  onFollowup,
   cancelWorkspace,
   needsClarification,
   inspector,
@@ -652,8 +676,11 @@ function WorkspaceView({
 }: {
   prompt: string;
   setPrompt: (value: string) => void;
+  onNewPrompt: (value: string) => void;
+  hasContext: boolean;
   phase: GenerationPhase;
   generateWorkspace: () => void;
+  onFollowup: (value:string)=>void;
   cancelWorkspace: () => void;
   needsClarification: boolean;
   inspector: "safety" | "query";
@@ -683,9 +710,10 @@ function WorkspaceView({
       <section className="workspace-intro">
         <div>
           <div className="intro-kicker"><Sparkles size={14} /> Dynamic workspace</div>
-          <h2>What do you need to see?</h2>
+          <h2>{hasContext ? "Refine your current workspace" : "What do you need to see?"}</h2>
           <p>Morph builds a secure interface around the job you describe.</p>
         </div>
+        <button className="secondary-button" onClick={()=>onNewPrompt("")}>New workspace</button>
         <button
           className={`secondary-button ${saved ? "saved" : ""}`}
           onClick={onSave}
@@ -731,10 +759,10 @@ function WorkspaceView({
 
       <div className="suggestion-row" aria-label="Prompt suggestions">
         <span>Try</span>
-        <button onClick={() => setPrompt("Show motor policies expiring in the next 15 days above ₹20,000.")}>Upcoming renewals</button>
-        <button onClick={() => setPrompt("Show high-value claims reported this month by branch.")}>High-value claims</button>
-        <button onClick={() => setPrompt("Show pending endorsements grouped by type.")}>Pending endorsements</button>
-        <button onClick={() => setPrompt("Show the active policy portfolio by product.")}>Policy portfolio</button>
+        <button onClick={() => onNewPrompt("Show motor policies expiring in the next 15 days above ₹20,000.")}>Upcoming renewals</button>
+        <button onClick={() => onNewPrompt("Show high-value claims reported this month by branch.")}>High-value claims</button>
+        <button onClick={() => onNewPrompt("Show pending endorsements grouped by type.")}>Pending endorsements</button>
+        <button onClick={() => onNewPrompt("Show the active policy portfolio by product.")}>Policy portfolio</button>
       </div>
 
       {workspaceData && (
@@ -763,7 +791,7 @@ function WorkspaceView({
         </div>
       )}
 
-      <div className="workspace-grid">
+      <div className={`workspace-grid ${workspaceData ? "" : "single-column"}`}>
         <section className="result-panel">
           <div className="result-toolbar">
             <div className="result-title">
@@ -839,6 +867,8 @@ function WorkspaceView({
             </div>
           )}
 
+          {workspaceData && <RequestInterpretation response={workspaceData}/>}
+          {workspaceData && <WorkspaceConversation response={workspaceData} onFollowup={onFollowup} busy={isGenerating}/>}
           <div className="result-body">
             <AnimatePresence mode="wait">
               {isGenerating ? (
@@ -866,6 +896,7 @@ function WorkspaceView({
                       block={block}
                       filterText={filterText}
                       setToast={setToast}
+                      onDrilldown={workspaceData?.queryPlan.groupBy && !workspaceData.queryPlan.analysis?.time ? (value)=>onFollowup(`List individual records where ${workspaceData.queryPlan.groupBy} equals ${JSON.stringify(value)}, keeping all other filters. Table only, without totals.`) : undefined}
                     />
                   ))}
                 </motion.div>
@@ -974,7 +1005,9 @@ function WorkspaceBlockRenderer({
   block,
   filterText,
   setToast,
+  onDrilldown,
 }: {
+  onDrilldown?: (value:string)=>void;
   block: WorkspaceBlock;
   filterText: string;
   setToast: (message: string) => void;
@@ -1045,7 +1078,7 @@ function WorkspaceBlockRenderer({
         {!block.items.length ? <p className="empty-table-cell" role="status">No matching data for this request.</p> : !block.items.some(item=>item.value!==null) ? <p className="empty-table-cell" role="status">No measure values are available for this request.</p> : block.variant === "donut" ? (
           <div className="catalog-donut-wrap">
             <div className="catalog-donut" style={{ background: `conic-gradient(${donutGradient || "#e8ebe3 0 100%"})` }}><span>{formatter.format(total)}</span></div>
-            <div className="catalog-donut-legend">{block.items.map((item, index) => <div key={`${item.label}-${index}`}><i style={{ background: palette[index % palette.length] }} /><span>{item.label}</span><strong>{formatChartValue(item.value)}</strong></div>)}</div>
+            <div className="catalog-donut-legend">{block.items.map((item, index) => <div key={`${item.label}-${index}`}><i style={{ background: palette[index % palette.length] }} /><span>{item.label}</span><strong>{formatChartValue(item.value)}</strong>{onDrilldown&&<button aria-label={`View records for ${item.label}`} onClick={()=>onDrilldown(item.drilldownValue??item.label)}>View records</button>}</div>)}</div>
           </div>
         ) : block.variant === "line" ? (
           <div className="catalog-line-wrap">
@@ -1063,7 +1096,7 @@ function WorkspaceBlockRenderer({
           <div className="catalog-chart-grid bar">
             {block.items.map((item, index) => (
               <div className="catalog-chart-item" key={`${item.label}-${index}`}>
-                <span>{item.label}</span>
+                {onDrilldown ? <button className="chart-drilldown" aria-label={`View records for ${item.label}`} onClick={()=>onDrilldown(item.drilldownValue??item.label)}>{item.label} →</button> : <span>{item.label}</span>}
                 <div aria-label={`${item.label}: ${formatChartValue(item.value)}`}>
                   <i style={{ marginLeft: `${(item.value ?? 0) >= 0 ? (-minimum / range) * 100 : (((item.value ?? 0)-minimum)/range)*100}%`, width: `${(Math.abs(item.value ?? 0) / range) * 100}%` }} />
                 </div>
@@ -1303,11 +1336,12 @@ function renderTableCell(
 async function requestDynamicWorkspace(
   prompt: string,
   signal?:AbortSignal,
+  context?:WorkspaceContext,
 ): Promise<DynamicWorkspaceResponse> {
   const response = await authenticatedFetch("/api/workspaces/generate", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt, limit: 200 }),
+    body: JSON.stringify({ prompt, limit: 200, ...(context ? {context} : {}) }),
     signal,
   });
   const payload = (await response.json()) as

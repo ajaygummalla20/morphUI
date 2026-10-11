@@ -160,3 +160,19 @@ test("shared definitions stay within their organization and only their owner can
   await assert.rejects(updateWorkspace({ ...actor, role: "viewer" }, id, { pinned: true }));
   assert.equal((await loadAppState(actor)).savedWorkspaces[0].title, "Team policies");
 });
+
+test('workspace copies retain definitions, receive independent IDs, and cannot cross tenants',async t=>{
+  fixture(t);
+  const {duplicateWorkspace}=await import('../db/app-state');
+  const {workspaceContextSchema}=await import('../lib/workspaces/context');
+  const entity=insuranceSemanticCatalog.entities.find(e=>e.entity==='policies')!;
+  const definition=workspaceContextSchema.parse({plan:{source:entity.source,catalogVersion:insuranceSemanticCatalog.catalogVersion,operation:'select',entity:'policies',fields:['policy_number'],filters:[],orderBy:[],rowLimit:200},presentation:{mode:'table_only',blocks:['table'],tableLayout:'records'},chartValue:'value'});
+  const id='eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+  await saveWorkspace(actor,{id,title:'Policy review',prompt:'Show policies',savedAt:new Date().toISOString(),data:null,pinned:false,definition});
+  await duplicateWorkspace(actor,id);
+  const state=await loadAppState(actor);assert.equal(state.savedWorkspaces.length,2);
+  assert.notEqual(state.savedWorkspaces[0].id,state.savedWorkspaces[1].id);
+  for(const item of state.savedWorkspaces){assert.deepEqual(item.definition,definition);assert.equal(item.data,null);assert.equal(item.prompt,'Show policies');}
+  await assert.rejects(duplicateWorkspace({...actor,id:'user_b',organizationId:'org_b'},id));
+  await assert.rejects(duplicateWorkspace({...actor,role:'viewer'},id));
+});

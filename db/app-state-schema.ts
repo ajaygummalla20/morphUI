@@ -267,10 +267,7 @@ export const savedWorkspaces = sqliteTable(
   },
   (table) => [
     index("saved_workspaces_owner_idx").on(table.ownerUserId),
-    uniqueIndex("saved_workspaces_owner_prompt_uidx").on(
-      table.ownerUserId,
-      table.prompt,
-    ),
+    index("saved_workspaces_owner_prompt_idx").on(table.ownerUserId,table.prompt),
   ],
 );
 

@@ -1,3 +1,5 @@
+import {duplicateWorkspace} from "@/db/app-state";
+import {workspaceContextSchema} from "@/lib/workspaces/context";
 import { ZodError, z } from "zod";
 import {
   addConnector,
@@ -20,6 +22,7 @@ import { securityResponse,readJsonLimited,assertRole,SecurityError } from '@/lib
 export const dynamic = "force-dynamic";
 
 const savedWorkspaceSchema = z.object({
+  definition: workspaceContextSchema.optional(),
   id: z.string().uuid(),
   title: z.string().trim().min(1).max(160),
   prompt: z.string().trim().min(8).max(500),
@@ -50,6 +53,7 @@ const connectorSchema = z.object({
 });
 
 const actionSchema = z.discriminatedUnion("action", [
+  z.object({action:z.literal("duplicate_workspace"),id:z.string().uuid()}).strict(),
   z.object({action:z.literal('update_workspace'),id:z.string().uuid(),title:z.string().trim().min(1).max(160).optional(),pinned:z.boolean().optional(),shared:z.boolean().optional(),delete:z.boolean().optional()}),
   z.object({ action: z.literal("save_workspace"), workspace: savedWorkspaceSchema }),
   z.object({ action: z.literal("replace_rules"), rules: z.array(accessRuleSchema).max(100) }),
@@ -117,6 +121,8 @@ export async function POST(request: Request) {
 
     if (input.action === "save_workspace") {
       await saveWorkspace(actor, {...input.workspace,data:null});
+    } else if (input.action === "duplicate_workspace") {
+      await duplicateWorkspace(actor,input.id);
     } else if (input.action === 'update_workspace') {
       await updateWorkspace(actor,input.id,input);
     } else if (input.action === "replace_rules") {

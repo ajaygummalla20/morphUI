@@ -1,3 +1,4 @@
+import {validateWorkspaceContext} from "@/lib/workspaces/context";
 import { ZodError } from "zod";
 import {
   GatewayDeniedError,
@@ -36,11 +37,15 @@ export async function POST(request: Request) {
     discovery.catalog.entities = discovery.catalog.entities.filter(entity=>entities.includes(entity.entity));
     discovery.catalog.relationships = discovery.catalog.relationships.filter(r=>entities.includes(r.fromEntity)&&entities.includes(r.toEntity));
     if (!discovery.catalog.entities.length) throw new SecurityError(403,'datasets_disabled','No datasets are enabled for this connector.');
+    if(input.context){
+      try{validateWorkspaceContext(input.context,discovery.catalog);}
+      catch{throw new SecurityError(400,"invalid_workspace_context","The saved workspace no longer matches the approved catalogue. Start a new workspace.");}
+    }
     const plannerResult = await planWorkspaceRequestWithAi(
       input.prompt,
       discovery.catalog,
       input.limit,
-      { abortSignal: request.signal, allowFallback: demoMode() && process.env.MORPH_ALLOW_RULE_BASED_PLANNER === "true" },
+      { context: input.context, abortSignal: request.signal, allowFallback: demoMode() && process.env.MORPH_ALLOW_RULE_BASED_PLANNER === "true" },
     );
     const plan = plannerResult.plan;
     request.signal.throwIfAborted();
@@ -73,6 +78,7 @@ export async function POST(request: Request) {
         execution.sourceMode,
       ),
       planner: plannerResult.planner,
+      chartValue: plan.chartValue,
     };
 
     await recordWorkspaceRun(actor,{prompt:input.prompt,response,status:'succeeded',durationMs:Math.round(performance.now()-startedAt)});

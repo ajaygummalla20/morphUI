@@ -1460,3 +1460,36 @@ kbd { min-width: 20px; display: inline-grid; place-items: center; padding: 3px 5
 .saved-workspaces .saved-open { font-weight:600; background:#f1f7e8; }
 .saved-workspaces button:disabled { opacity:.5; cursor:wait; }
 button:focus-visible,a:focus-visible,input:focus-visible,summary:focus-visible { outline:2px solid #577d20; outline-offset:3px; }
+
+/* Guided presentation follows Morph's existing lime, neutral and ink palette. */
+.demo-guide, .workspace-conversation, .request-interpretation { background: #f8faf4; border: 1px solid var(--line, #dde2d5); border-radius: 14px; padding: 20px; margin-bottom: 16px; }
+.demo-guide-heading, .demo-scene { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
+.demo-guide h2 { font-size: 21px; margin: 8px 0; }
+.demo-guide h3, .workspace-conversation h3 { font-size: 16px; margin: 8px 0; }
+.demo-guide p, .workspace-conversation p, .request-interpretation p { font-size: 13px; line-height: 1.6; color: #59634f; }
+.demo-personas { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0; }
+.demo-personas button { border: 1px solid #cbd5be; border-radius: 8px; padding: 8px 12px; background: #fff; color: #27311d; font-size: 13px; }
+.demo-personas button[aria-pressed="true"] { background: #dff4bf; border-color: #88a951; }
+.demo-scene blockquote { margin: 12px 0; border-left: 3px solid #88a951; padding-left: 12px; font-size: 15px; line-height: 1.5; }
+.workspace-conversation, .request-interpretation { margin: 16px; }
+.workspace-conversation form { display: flex; gap: 10px; }
+.workspace-conversation input { width: 100%; min-width: 0; border: 1px solid #cbd5be; border-radius: 8px; padding: 12px; background: #fff; }
+.request-interpretation summary { cursor: pointer; font-size: 13px; font-weight: 650; }
+.request-interpretation dl { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 16px; margin-top: 16px; }
+.request-interpretation dt { color: #66715a; font-size: 12px; }
+.request-interpretation dd { margin: 6px 0; font-size: 13px; overflow-wrap: anywhere; }
+.chart-drilldown, .catalog-donut-legend button { border: 0; background: transparent; color: #42671f; cursor: pointer; text-align: left; font-size: 12px; text-decoration: underline; }
+.app-shell.presentation-mode { display: block; padding: 8px; }
+.presentation-mode > .sidebar, .presentation-mode .menu-button, .presentation-mode .inspector-panel, .presentation-mode .saved-workspaces { display: none; }
+.presentation-mode .workspace-grid { grid-template-columns: minmax(0,1fr); }
+.presentation-mode .page-content { max-width: 1440px; margin: 0 auto; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+@media (max-width: 768px) {
+ .demo-guide-heading, .demo-scene, .workspace-conversation form { flex-direction: column; }
+ .request-interpretation dl { grid-template-columns: repeat(2, minmax(0,1fr)); }
+ .topbar-actions { flex-wrap: wrap; }
+ .demo-guide, .workspace-conversation, .request-interpretation { padding: 14px; }
+}
+
+.workspace-grid.single-column { grid-template-columns: minmax(0,1fr); }
+.demo-guide button:disabled, .workspace-conversation button:disabled { opacity: .5; cursor: not-allowed; }

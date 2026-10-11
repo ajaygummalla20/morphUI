@@ -1,7 +1,9 @@
+import type {WorkspaceContext} from "../workspaces/context";
 import type { DynamicWorkspaceResponse } from "@/lib/workspaces/dynamic";
 import type { SemanticCatalog } from "@/lib/catalog/semantic";
 
 export type SavedWorkspaceRecord = {
+  definition?: WorkspaceContext;
   id: string;
   title: string;
   prompt: string;
@@ -70,6 +72,7 @@ export type AppStateBootstrap = {
 };
 
 export type AppStateAction =
+  | {action:"duplicate_workspace";id:string}
   | {action:'update_workspace'; id:string; title?:string;pinned?:boolean;shared?:boolean;delete?:boolean}
   | {
       action: "save_workspace";

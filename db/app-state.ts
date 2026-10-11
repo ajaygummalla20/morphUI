@@ -1,3 +1,4 @@
+import {workspaceContextSchema} from "../lib/workspaces/context";
 import { env } from "cloudflare:workers";
 import { and, desc, eq, inArray, or } from "drizzle-orm";
 import { demoMode, requireSession } from '@/lib/auth/session';
@@ -187,7 +188,7 @@ export async function saveWorkspace(
 ) {
   assertRole(actor.role,'member');
   const db = getAppStateDb();
-  await db
+  const written=await db
     .insert(schema.savedWorkspaces)
     .values({
       id: workspace.id,
@@ -197,21 +198,24 @@ export async function saveWorkspace(
       prompt: workspace.prompt,
       intent: workspace.data?.intent ?? null,
       sourceMode: workspace.data?.sourceMode ?? null,
-      workspaceJson: null,
+      workspaceJson: workspace.definition ? JSON.stringify(workspaceContextSchema.parse(workspace.definition)) : null,
       pinned: workspace.pinned,
       lastOpenedAt: new Date().toISOString(),
     })
     .onConflictDoUpdate({
-      target: [schema.savedWorkspaces.ownerUserId, schema.savedWorkspaces.prompt],
+      target: schema.savedWorkspaces.id,
+      setWhere:and(eq(schema.savedWorkspaces.organizationId,actor.organizationId),eq(schema.savedWorkspaces.ownerUserId,actor.id)),
       set: {
+        prompt:workspace.prompt,
         title: workspace.title,
         intent: workspace.data?.intent ?? null,
         sourceMode: workspace.data?.sourceMode ?? null,
-        workspaceJson: null,
+        workspaceJson: workspace.definition ? JSON.stringify(workspaceContextSchema.parse(workspace.definition)) : null,
         pinned: workspace.pinned,
         updatedAt: new Date().toISOString(),
       },
-    });
+    }).returning({id:schema.savedWorkspaces.id});
+  if(!written.length)throw new SecurityError(404,"workspace_not_found","Workspace not found or not owned by you.");
   await recordAudit(actor, {
     action: "Workspace saved",
     target: workspace.title,
@@ -593,6 +597,7 @@ function mapSavedWorkspace(
   row: typeof schema.savedWorkspaces.$inferSelect,
 ): SavedWorkspaceRecord {
   return {
+    ...readSavedDefinition(row.workspaceJson),
     id: row.id,
     title: row.title,
     prompt: row.prompt,
@@ -744,4 +749,16 @@ export async function activeConnectorFor(actor:AppActor) {
   if (!connector) throw new SecurityError(409,'connector_required','An administrator must activate a connector first.');
   const permissions = await db.query.connectorPermissions.findMany({where:and(eq(schema.connectorPermissions.connectorId,connector.id),eq(schema.connectorPermissions.enabled,true))});
   return {connector,entities:permissions.map(p=>p.tableName)};
+}
+
+function readSavedDefinition(value:string|null):{definition?:SavedWorkspaceRecord['definition']} {
+  if(!value)return {};
+  try{const parsed=workspaceContextSchema.safeParse(JSON.parse(value));return parsed.success?{definition:parsed.data}:{};}catch{return {};}
+}
+export async function duplicateWorkspace(actor:AppActor,id:string){
+  assertRole(actor.role,'member');
+  const db=getAppStateDb();
+  const existing=await db.query.savedWorkspaces.findFirst({where:and(eq(schema.savedWorkspaces.id,id),eq(schema.savedWorkspaces.organizationId,actor.organizationId),or(eq(schema.savedWorkspaces.ownerUserId,actor.id),eq(schema.savedWorkspaces.shared,true)))});
+  if(!existing)throw new SecurityError(404,'workspace_not_found','Workspace not found or not available to you.');
+  await saveWorkspace(actor,{...mapSavedWorkspace(existing),id:crypto.randomUUID(),title:`${existing.title.slice(0,150)} (copy)`,pinned:false,shared:false,data:null});
 }

@@ -231,3 +231,11 @@ By default it uses the server's configured AI credentials and tests planning/ren
 Opening the app does not invoke the AI automatically. Generation shows an elapsed-time indicator rather than simulated completed stages. Cancel stops the UI wait, suppresses stale responses and propagates cancellation to the pending planner where the hosting transport supports disconnect signals. A Gateway query already executing may still finish. Clarification messages retain the model's question; users edit their request instead of blindly retrying it.
 
 Existing PostgreSQL analytics tests verify arithmetic against fixtures: full-population totals before limits, percentage changes, missing buckets, undefined baselines, averages and category alignment. Passing the planner benchmark alone does not prove those calculations or guarantee provider availability.
+
+### Guided demo and workspace follow-ups
+
+Select **Guided demo** to walk through Operations, Claims Analyst, Executive and Trust examples. These are presentation personas, not impersonation or permission controls. **Present** focuses the interface while keeping the Gateway/data-source labels visible.
+
+After generating a workspace, **Refine this workspace** accepts changes such as “Show the same result in a normal table only.” The planner receives only the previous query definition and presentation preferences, never returned rows. Existing filters must be preserved unless the model explicitly identifies an intentional filter change. Every revised plan is validated against the current catalogue and independently authorized by the Gateway. Follow-ups never use rule-based compatibility fallback. Changing datasets requires starting a new workspace.
+
+Category chart controls open a fresh, authorized records query for that group. Record drawers display only the fields already returned by the Gateway. Saved workspaces store a bounded query/display definition without result rows; reopening refreshes data under current permissions. Duplicate creates an independent definition with its own ID. The D1 migration removes uniqueness by prompt so copies do not overwrite the original; updates remain scoped to organization and owner.
