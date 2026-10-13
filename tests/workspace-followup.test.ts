@@ -44,3 +44,30 @@ test('unannounced new filters cannot silently narrow a follow-up',async()=>{
  const result=await planWorkspaceRequestWithAi('Make this a donut chart only.',insuranceSemanticCatalog,200,{context,generateProposal:async()=>++attempts===1?{...proposal,filters:[...context.plan.filters,{field:'status',operator:'equals',value:'active'}]}:proposal});
  assert.equal(attempts,2);assert.deepEqual(result.plan.filters,context.plan.filters);
 });
+
+test('a clarification answer carries the unresolved request and question without rows',async()=>{
+ const clarification={request:'Show premium growth.',question:'Which date basis and period should I use?'};
+ const parsed=dynamicWorkspaceRequestSchema.parse({prompt:'January to March 2026, monthly, coverage start date.',context,clarification});
+ assert.deepEqual(parsed.clarification,clarification);
+ let received=false;
+ await planWorkspaceRequestWithAi(parsed.prompt,insuranceSemanticCatalog,200,{context,clarification,generateProposal:async input=>{received=input.clarification?.request===clarification.request;return proposal;}});
+ assert.ok(received);
+ assert.throws(()=>dynamicWorkspaceRequestSchema.parse({...parsed,clarification:{...clarification,rows:[{customer:'private'}]}}));
+});
+
+test('short conversational answers are allowed with context while initial requests remain descriptive',()=>{
+ assert.equal(dynamicWorkspaceRequestSchema.parse({prompt:'Count',context}).prompt,'Count');
+ assert.equal(dynamicWorkspaceRequestSchema.parse({prompt:'Yes',context,clarification:{request:'Count',question:'Should I use a count?'}}).prompt,'Yes');
+ assert.throws(()=>dynamicWorkspaceRequestSchema.parse({prompt:'Yes'}));
+ assert.throws(()=>dynamicWorkspaceRequestSchema.parse({prompt:' ',context}));
+});
+
+test('short follow-up workspaces can be saved with definitions, but not as bare ambiguous prompts',async()=>{
+ const {POST}=await import('../app/api/app-state/route');
+ const id=crypto.randomUUID();
+ const workspace={id,title:'Policy count',prompt:'Count',savedAt:new Date().toISOString(),data:null,pinned:false,definition:{...context,plan:{...context.plan,analysis:{metricId:'policy_count',time:null,comparison:'none'}}}};
+ const request=(body:unknown)=>new Request('https://morph.example/api/app-state',{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://morph.example'},body:JSON.stringify(body)});
+ const response=await POST(request({action:'save_workspace',workspace}));assert.equal(response.status,200);
+ assert.equal((await POST(request({action:'save_workspace',workspace:{...workspace,id:crypto.randomUUID(),definition:undefined}}))).status,400);
+ assert.equal((await POST(request({action:'update_workspace',id,delete:true}))).status,200);
+});

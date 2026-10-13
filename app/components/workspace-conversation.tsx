@@ -1,12 +1,29 @@
-'use client';
-import {useState} from 'react';
+"use client";
+import {useEffect,useRef,useState} from 'react';
+import {ArrowUp,LoaderCircle,MessageSquare,Sparkles} from 'lucide-react';
 import type {DynamicWorkspaceResponse} from '@/lib/workspaces/dynamic';
-export function WorkspaceConversation({response,onFollowup,busy}:{response:DynamicWorkspaceResponse;onFollowup:(prompt:string)=>void;busy:boolean}){
- const [text,setText]=useState('');const plan=response.queryPlan;
- return <section className="workspace-conversation" aria-label="Refine this workspace"><div><h3>Refine this workspace</h3><p>Keep the current dataset and filters. Ask for a different format, measure or grouping, or explicitly change a filter.</p></div>
- <form onSubmit={event=>{event.preventDefault();if(text.trim().length>=8)onFollowup(text.trim());}}><label htmlFor="followup-request" className="sr-only">Follow-up request</label><input id="followup-request" value={text} maxLength={500} minLength={8} required disabled={busy} onChange={event=>setText(event.target.value)} placeholder="Make this a donut chart only…"/><button className="primary-button" disabled={busy||text.trim().length<8}>Apply change</button></form>
- <div className="demo-personas"><button disabled={busy} onClick={()=>onFollowup('Show the same result in a normal table only.')}>Table only</button>{plan.groupBy&&!plan.analysis?.time&&<button disabled={busy} onClick={()=>onFollowup('Show the same measure and filters as a donut chart only.')}>Donut chart</button>}<button disabled={busy} onClick={()=>onFollowup('Refresh this workspace without changing its query or display.')}>Refresh data</button></div>
- </section>;
+import type {ConversationMessage} from '@/lib/workspaces/conversation';
+
+export function WorkspaceConversation({response,messages,onFollowup,busy,onCancel,onRetry,error,needsClarification}:{response:DynamicWorkspaceResponse;messages:ConversationMessage[];onFollowup:(prompt:string,reply?:boolean)=>void;busy:boolean;onCancel:()=>void;onRetry:()=>void;error:string|null;needsClarification:boolean}){
+ const [text,setText]=useState('');
+ const history=useRef<HTMLDivElement>(null);
+ const followBottom=useRef(true);
+ const plan=response.queryPlan;
+ useEffect(()=>{if(followBottom.current&&history.current)history.current.scrollTop=history.current.scrollHeight;},[messages,busy]);
+ const send=(value:string,reply=true)=>{if(busy||value.trim().length<1)return;followBottom.current=true;onFollowup(value.trim(),reply);setText('');};
+ return <aside className="workspace-chat" aria-label="Workspace conversation">
+  <header className="chat-heading"><span className="chat-mark"><MessageSquare size={17}/></span><div><h3>Chat with your workspace</h3><p>Shape this view, one request at a time.</p></div></header>
+  <div className="chat-history" ref={history} role="log" aria-label="Conversation history" aria-live="polite" aria-relevant="additions" onScroll={()=>{const node=history.current;if(node)followBottom.current=node.scrollHeight-node.scrollTop-node.clientHeight<64;}}>
+   {messages.map(message=><article key={message.id} className={`chat-message ${message.role} ${message.kind??''}`}><span className="chat-author">{message.role==='user'?'You':'Morph'}</span><p>{message.content}</p></article>)}
+   {busy&&<div className="chat-working" role="status"><LoaderCircle size={15} className="spin"/> Updating your workspace…<button onClick={onCancel}>Cancel</button></div>}
+  </div>
+  <div className="chat-composer">
+   {error&&<p className="chat-preserved">Your last successful workspace is still visible. {needsClarification?'Reply below to clarify.':<button onClick={onRetry}>Retry last request</button>}</p>}
+   <div className="chat-quick-actions"><button disabled={busy} onClick={()=>send('Show the same result in a normal table only.',false)}>Table only</button>{plan.groupBy&&!plan.analysis?.time&&<button disabled={busy} onClick={()=>send('Show the same measure and filters as a donut chart only.',false)}>Donut chart</button>}<button disabled={busy} onClick={()=>send('Refresh this workspace without changing its query or display.',false)}>Refresh</button></div>
+   <form onSubmit={event=>{event.preventDefault();send(text);}}><label htmlFor="followup-request" className="sr-only">Message your workspace</label><textarea id="followup-request" value={text} maxLength={500} minLength={1} required rows={3} disabled={busy} onChange={event=>setText(event.target.value)} placeholder="Make this a circular chart, change a filter, or show individual records…"/><div className="chat-send-row"><span><Sparkles size={12}/> Current filters stay unless you change them</span><button aria-label="Send message" className="chat-send" disabled={busy||text.trim().length<1}><ArrowUp size={17}/></button></div></form>
+   <p className="chat-data-note">{response.sourceMode==='secure_demo'?'Synthetic demo data':'Client Gateway'} · Read only · Results stay out of the AI prompt</p>
+  </div>
+ </aside>;
 }
 export function RequestInterpretation({response}:{response:DynamicWorkspaceResponse}){
  const plan=response.queryPlan;

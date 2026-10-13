@@ -16,7 +16,7 @@
     "test:gateway": "bash scripts/sites-env.sh -- node --import tsx --import ./tests/helpers/demo-api.ts --test tests/gateway-policy.test.ts tests/gateway-catalog.test.ts tests/gateway-response.test.ts",
     "test:gateway-service": "npm test --prefix gateway",
     "test:gateway-postgres": "bash scripts/sites-env.sh -- node --import tsx --test tests/gateway-postgres.test.ts tests/gateway-analytics-postgres.test.ts tests/gateway-analysis-validation.test.ts",
-    "test:workspace": "bash scripts/sites-env.sh -- node --import tsx --import ./tests/helpers/demo-api.ts --test tests/dynamic-workspace.test.ts tests/semantic-catalog.test.ts tests/planner-provider.test.ts tests/workspace-export.test.ts tests/request-understanding.test.ts tests/workspace-analysis.test.ts tests/planner-api-failure.test.ts tests/planner-benchmark.test.ts tests/workspace-followup.test.ts",
+    "test:workspace": "bash scripts/sites-env.sh -- node --import tsx --import ./tests/helpers/demo-api.ts --test tests/dynamic-workspace.test.ts tests/semantic-catalog.test.ts tests/planner-provider.test.ts tests/workspace-export.test.ts tests/request-understanding.test.ts tests/workspace-analysis.test.ts tests/planner-api-failure.test.ts tests/planner-benchmark.test.ts tests/workspace-followup.test.ts tests/workspace-conversation.test.ts",
     "validate:artifact": "bash scripts/validate-artifact.sh",
     "lint": "bash scripts/sites-env.sh -- eslint . --ignore-pattern dist --ignore-pattern .next",
     "typecheck": "tsc --noEmit",

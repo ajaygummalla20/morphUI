@@ -45,7 +45,7 @@ export async function POST(request: Request) {
       input.prompt,
       discovery.catalog,
       input.limit,
-      { context: input.context, abortSignal: request.signal, allowFallback: demoMode() && process.env.MORPH_ALLOW_RULE_BASED_PLANNER === "true" },
+      { clarification:input.clarification, context: input.context, abortSignal: request.signal, allowFallback: demoMode() && process.env.MORPH_ALLOW_RULE_BASED_PLANNER === "true" },
     );
     const plan = plannerResult.plan;
     request.signal.throwIfAborted();

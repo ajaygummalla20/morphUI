@@ -35,3 +35,9 @@ export function assertPreservedFilters(context:WorkspaceContext,entity:string,fi
     if(before!==after)throw new Error('Preserve every existing filter exactly unless the user explicitly changed that field; declare changedFilterFields for intentional changes.');
   }
 }
+
+export const workspaceClarificationSchema=z.object({
+ request:z.string().trim().min(1).max(500),question:z.string().trim().min(1).max(500),
+ answers:z.array(z.string().trim().min(1).max(500)).max(6).optional(),
+}).strict();
+export type WorkspaceClarification=z.infer<typeof workspaceClarificationSchema>;

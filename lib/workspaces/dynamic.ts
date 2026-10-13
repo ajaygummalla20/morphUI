@@ -1,4 +1,4 @@
-import {workspaceContextSchema} from "./context";
+import {workspaceContextSchema,workspaceClarificationSchema} from "./context";
 import { buildAnalysisWorkspace } from "./analysis";
 import { z } from "zod";
 import {
@@ -21,11 +21,14 @@ import {
 
 export const dynamicWorkspaceRequestSchema = z
   .object({
-    prompt: z.string().trim().min(8).max(500),
+    prompt: z.string().trim().min(1).max(500),
     limit: z.number().int().min(1).max(200).default(200),
     context: workspaceContextSchema.optional(),
+    clarification: workspaceClarificationSchema.optional(),
   })
-  .strict();
+  .strict().superRefine((input,ctx)=>{
+    if(!input.context && !input.clarification && input.prompt.length<8)ctx.addIssue({code:"custom",path:["prompt"],message:"Describe your initial workspace in at least eight characters."});
+  });
 
 export type WorkspaceIntent =
   | "renewals"

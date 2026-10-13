@@ -69,7 +69,8 @@ import { SavedWorkspaces } from './components/saved-workspaces';
 import { GenerationProgress } from './components/generation-progress';
 import {DemoGuide} from './components/demo-guide';
 import {WorkspaceConversation,RequestInterpretation} from './components/workspace-conversation';
-import {contextFromResponse,type WorkspaceContext} from '@/lib/workspaces/context';
+import {contextFromResponse,type WorkspaceContext,type WorkspaceClarification} from '@/lib/workspaces/context';
+import {startConversation,appendAssistantMessage,continueClarification,type ConversationMessage} from "@/lib/workspaces/conversation";
 import { WorkspaceRequestError } from '@/lib/workspaces/client-error';
 
 type SectionId = "workspaces" | "sources" | "rules" | "audit";
@@ -118,9 +119,10 @@ function WorkspaceApp() {
   const [section, setSection] = useState<SectionId>("workspaces");
   const [phase, setPhase] = useState<GenerationPhase>("ready");
   const [prompt, setPrompt] = useState(
-    "Show motor policies expiring in the next 15 days with premium above ₹20,000, grouped by relationship manager.",
+    "",
   );
   const [saved, setSaved] = useState(false);
+  const [conversation,setConversation]=useState<ConversationMessage[]>([]);
   const [inspector, setInspector] = useState<"safety" | "query">("safety");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -151,6 +153,7 @@ function WorkspaceApp() {
   const [resultPrompt,setResultPrompt]=useState("");
   const [retryContext,setRetryContext]=useState<WorkspaceContext|undefined>();
   const [retryPrompt,setRetryPrompt]=useState<string|undefined>();
+  const [retryClarification,setRetryClarification]=useState<WorkspaceClarification|undefined>();
   const requestSequence=useRef(0);
   const requestController=useRef<AbortController|null>(null);
   const reduceMotion = useReducedMotion();
@@ -235,24 +238,26 @@ function WorkspaceApp() {
     }
   };
 
-  const generateWorkspace = async (followup?: string, context?: WorkspaceContext, displayPrompt?:string) => {
+  const generateWorkspace = async (followup?: string, context?: WorkspaceContext, displayPrompt?:string, clarification?:WorkspaceClarification) => {
     if (phase !== "ready") return;
     const requestPrompt=followup ?? prompt;
-    setRetryContext(context);setRetryPrompt(requestPrompt);
+    setRetryContext(context);setRetryPrompt(requestPrompt);setRetryClarification(clarification);
     if(followup)setPrompt(displayPrompt??followup);
     setSaved(false);
     setWorkspaceError(null);
     setNeedsClarification(false);
     setWorkspaceLoading(true);
-    setWorkspaceData(null);
+    if(!context)setWorkspaceData(null);
+    setConversation(messages=>startConversation(messages,requestPrompt,!!context));
     setPhase("understanding");
     requestController.current?.abort();
     const sequence=++requestSequence.current;
     const controller=new AbortController();requestController.current=controller;
     try {
-      const response = await requestDynamicWorkspace(requestPrompt,controller.signal,context);
+      const response = await requestDynamicWorkspace(requestPrompt,controller.signal,context,clarification);
       if(sequence!==requestSequence.current)return;
       setWorkspaceData(response);
+      setConversation(messages=>appendAssistantMessage(messages,`${response.interpretation} ${context ? "The workspace has been updated." : "Your workspace is ready. Ask me to change the format, filters or grouping."}`));
       setResultPrompt(displayPrompt??requestPrompt);
       setRetryContext(context ? contextFromResponse(response) : undefined);
       setPhase("ready");
@@ -270,7 +275,8 @@ function WorkspaceApp() {
       setPhase("ready");
       setWorkspaceError(message);
       setNeedsClarification(error instanceof WorkspaceRequestError && error.needsClarification);
-      setWorkspaceData(null);
+      if(!context)setWorkspaceData(null);
+      setConversation(messages=>appendAssistantMessage(messages,message,"error"));
       setToast("Request needs attention — see the message above");
     } finally {
       if(sequence===requestSequence.current)setWorkspaceLoading(false);
@@ -285,7 +291,7 @@ function WorkspaceApp() {
 
   const updatePrompt = (value: string, preserveContext=false) => {
     requestSequence.current++; requestController.current?.abort();
-    setPrompt(value); setSaved(false); setWorkspaceData(null); setRetryPrompt(undefined);if(!preserveContext)setRetryContext(undefined);
+    setPrompt(value); setSaved(false); setWorkspaceData(null);setConversation([]);setRetryClarification(undefined); setRetryPrompt(undefined);if(!preserveContext)setRetryContext(undefined);
     setPhase("ready"); setWorkspaceLoading(false); setWorkspaceError(null); setNeedsClarification(false);
   };
 
@@ -393,6 +399,8 @@ function WorkspaceApp() {
   const cancelWorkspace = () => {
     requestSequence.current++; requestController.current?.abort();
     setPhase("ready"); setSaved(false); setWorkspaceLoading(false); setWorkspaceError(null); setNeedsClarification(false);
+    if(workspaceData){setPrompt(resultPrompt);setRetryContext(contextFromResponse(workspaceData));setRetryPrompt(undefined);setRetryClarification(undefined);}
+    setConversation(messages=>appendAssistantMessage(messages,workspaceData ? "Cancelled. Your last successful workspace is unchanged." : "Generation cancelled. You can try again.","cancelled"));
     setToast("Generation cancelled");
   };
 
@@ -401,10 +409,12 @@ function WorkspaceApp() {
     const sequence=++requestSequence.current;
     const controller=new AbortController();requestController.current=controller;
     setPhase('understanding');setWorkspaceError(null);setNeedsClarification(false);
+    setRetryClarification(undefined);
+    setConversation(startConversation([],item.prompt,false));
     setPrompt(item.prompt);setRetryContext(item.definition);setRetryPrompt(item.definition ? "Refresh this workspace without changing its query or display." : item.prompt);
     setWorkspaceData(null);
     setWorkspaceLoading(true);
-    void requestDynamicWorkspace(item.definition ? 'Refresh this workspace without changing its query or display.' : item.prompt,controller.signal,item.definition).then(data=>{if(sequence===requestSequence.current){setWorkspaceData(data);setResultPrompt(item.prompt);setWorkspaceError(null);}}).catch(error=>{if(sequence===requestSequence.current){setWorkspaceError(error instanceof Error?error.message:'Could not reopen workspace.');setNeedsClarification(error instanceof WorkspaceRequestError && error.needsClarification);}}).finally(()=>{if(sequence===requestSequence.current){setWorkspaceLoading(false);setPhase("ready");}});
+    void requestDynamicWorkspace(item.definition ? 'Refresh this workspace without changing its query or display.' : item.prompt,controller.signal,item.definition).then(data=>{if(sequence===requestSequence.current){setWorkspaceData(data);setResultPrompt(item.prompt);setWorkspaceError(null);setConversation(messages=>appendAssistantMessage(messages,`${data.interpretation} Reopened with freshly authorized data.`));}}).catch(error=>{if(sequence===requestSequence.current){setWorkspaceError(error instanceof Error?error.message:'Could not reopen workspace.');setConversation(messages=>appendAssistantMessage(messages,error instanceof Error?error.message:'Could not reopen workspace.',"error"));setNeedsClarification(error instanceof WorkspaceRequestError && error.needsClarification);}}).finally(()=>{if(sequence===requestSequence.current){setWorkspaceLoading(false);setPhase("ready");}});
     setSaved(true);
     chooseSection("workspaces");
     setToast(`Fetching fresh data for ${item.title}`);
@@ -557,13 +567,14 @@ function WorkspaceApp() {
             {section === 'workspaces' && <SavedWorkspaces items={savedWorkspaces} onOpen={openSavedWorkspace} onRefresh={async()=>{const state=await requestAppStateBootstrap();setSavedWorkspaces(state.savedWorkspaces);}} />}
             {section === "workspaces" && (
               <WorkspaceView
+                conversation={conversation}
+                onRetry={()=>{void generateWorkspace(retryPrompt,retryContext,prompt,retryClarification);}}
                 prompt={prompt}
                 setPrompt={value=>updatePrompt(value,true)}
                 onNewPrompt={updatePrompt}
-                hasContext={!!retryContext}
                 phase={phase}
-                generateWorkspace={()=>{void generateWorkspace(workspaceData ? "Refresh this workspace without changing its query or display." : retryPrompt,workspaceData ? contextFromResponse(workspaceData) : retryContext,prompt);}}
-                onFollowup={value=>{if(workspaceData)void generateWorkspace(value,contextFromResponse(workspaceData));}}
+                generateWorkspace={()=>{void generateWorkspace(workspaceData ? "Refresh this workspace without changing its query or display." : retryPrompt,workspaceData ? contextFromResponse(workspaceData) : retryContext,workspaceData ? resultPrompt : prompt,workspaceData ? undefined : retryClarification);}}
+                onFollowup={(value,reply=true)=>{if(workspaceData)void generateWorkspace(value,contextFromResponse(workspaceData),undefined,reply&&needsClarification&&retryPrompt&&workspaceError ? continueClarification(retryClarification,retryPrompt,workspaceError) : undefined);}}
                 cancelWorkspace={cancelWorkspace}
                 needsClarification={needsClarification}
                 inspector={inspector}
@@ -652,10 +663,11 @@ function WorkspaceApp() {
 }
 
 function WorkspaceView({
+  conversation,
+  onRetry,
   prompt,
   setPrompt,
   onNewPrompt,
-  hasContext,
   phase,
   generateWorkspace,
   onFollowup,
@@ -674,13 +686,14 @@ function WorkspaceView({
   workspaceLoading,
   onOpenSources,
 }: {
+  conversation: ConversationMessage[];
+  onRetry: ()=>void;
   prompt: string;
   setPrompt: (value: string) => void;
   onNewPrompt: (value: string) => void;
-  hasContext: boolean;
   phase: GenerationPhase;
   generateWorkspace: () => void;
-  onFollowup: (value:string)=>void;
+  onFollowup: (value:string,reply?:boolean)=>void;
   cancelWorkspace: () => void;
   needsClarification: boolean;
   inspector: "safety" | "query";
@@ -697,6 +710,7 @@ function WorkspaceView({
   onOpenSources: () => void;
 }) {
   const isGenerating = phase !== "ready" || workspaceLoading;
+  const [detailsOpen,setDetailsOpen]=useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
   const [filterText, setFilterText] = useState("");
   const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
@@ -706,25 +720,25 @@ function WorkspaceView({
   );
 
   return (
-    <div className="workspace-page">
+    <div className={`workspace-page ${workspaceData ? "workspace-built" : "workspace-start"}`}>
       <section className="workspace-intro">
         <div>
-          <div className="intro-kicker"><Sparkles size={14} /> Dynamic workspace</div>
-          <h2>{hasContext ? "Refine your current workspace" : "What do you need to see?"}</h2>
-          <p>Morph builds a secure interface around the job you describe.</p>
+          <div className="intro-kicker"><Sparkles size={14} /> {workspaceData ? "Your workspace" : "From a question to a workspace"}</div>
+          <h2>{workspaceData ? workspaceSpec.title : "What would you like to work on?"}</h2>
+          <p>{workspaceData ? "Explore your data here. Refine the view in the conversation alongside it." : "Describe what you need. Build your view, then shape it in conversation."}</p>
         </div>
-        <button className="secondary-button" onClick={()=>onNewPrompt("")}>New workspace</button>
+        {workspaceData && <div className="workspace-heading-actions"><button className="secondary-button" onClick={()=>onNewPrompt("")}>New workspace</button>
         <button
           className={`secondary-button ${saved ? "saved" : ""}`}
           onClick={onSave}
-          disabled={!workspaceData || isGenerating}
+          disabled={!workspaceData || isGenerating || !!workspaceError}
         >
           {saved ? <Check size={15} /> : <Save size={15} />}
           {saved ? "Saved" : "Save workspace"}
-        </button>
+        </button></div>}
       </section>
 
-      <section className="prompt-card">
+      {!workspaceData && <section className="prompt-card">
         <div className="prompt-orb"><WandSparkles size={19} /></div>
         <div className="prompt-main">
           <label htmlFor="workspace-prompt">Describe your workspace</label>
@@ -733,20 +747,22 @@ function WorkspaceView({
             disabled={isGenerating}
             value={prompt}
             onChange={(event) => setPrompt(event.target.value)}
-            rows={2}
+            placeholder="Show policies renewing soon, grouped by relationship manager, as a table…"
+            maxLength={500}
+            rows={4}
           />
           <div className="prompt-footer">
             <div className="prompt-context">
               <button onClick={onOpenSources} title="Open data sources">
                 <Database size={13} />
-                {workspaceData?.spec.source ?? "policies_read_replica"}
+                Data sources
                 <ChevronDown size={12} />
               </button>
-              <span><ShieldCheck size={13} /> {workspaceData?.safety.fieldsAccessed ?? 0} Gateway-approved fields</span>
+              <span><ShieldCheck size={13} /> Read-only access</span>
             </div>
             <button
               className="generate-button"
-              disabled={isGenerating || !prompt.trim()}
+              disabled={isGenerating || prompt.trim().length<8}
               onClick={generateWorkspace}
             >
               {isGenerating ? <LoaderCircle className="spin" size={16} /> : <Play size={15} fill="currentColor" />}
@@ -755,23 +771,15 @@ function WorkspaceView({
             {isGenerating && <button className="secondary-button" onClick={cancelWorkspace}>Cancel generation</button>}
           </div>
         </div>
-      </section>
+      </section>}
 
-      <div className="suggestion-row" aria-label="Prompt suggestions">
+      {!workspaceData && <div className="suggestion-row" aria-label="Prompt suggestions">
         <span>Try</span>
         <button onClick={() => onNewPrompt("Show motor policies expiring in the next 15 days above ₹20,000.")}>Upcoming renewals</button>
         <button onClick={() => onNewPrompt("Show high-value claims reported this month by branch.")}>High-value claims</button>
         <button onClick={() => onNewPrompt("Show pending endorsements grouped by type.")}>Pending endorsements</button>
         <button onClick={() => onNewPrompt("Show the active policy portfolio by product.")}>Policy portfolio</button>
-      </div>
-
-      {workspaceData && (
-        <div className="interpretation-strip">
-          <Sparkles size={13} />
-          <span>Understood as</span>
-          <strong>{workspaceData.interpretation}</strong>
-        </div>
-      )}
+      </div>}
 
       {workspaceData?.planner?.mode === "deterministic_fallback" && (
         <p className="planner-notice" role="status">
@@ -783,7 +791,7 @@ function WorkspaceView({
         </p>
       )}
 
-      {workspaceError && (
+      {workspaceError && !workspaceData && (
         <div className="workspace-alert" role="alert">
           <Database size={14} />
           <div><strong>{needsClarification ? "Let’s clarify your request" : "Generation needs attention"}</strong><p>{workspaceError}</p>{needsClarification && <p>Edit the request above and select Build workspace.</p>}</div>
@@ -791,7 +799,7 @@ function WorkspaceView({
         </div>
       )}
 
-      <div className={`workspace-grid ${workspaceData ? "" : "single-column"}`}>
+      {(workspaceData || isGenerating) && <div className={`workspace-grid ${workspaceData ? "" : "single-column"}`}>
         <section className="result-panel">
           <div className="result-toolbar">
             <div className="result-title">
@@ -805,11 +813,12 @@ function WorkspaceView({
               <span className={`source-mode-tag ${workspaceData?.sourceMode ?? "loading"}`}>
                 {workspaceLoading ? <LoaderCircle className="spin" size={11} /> : <Database size={11} />}
                 {workspaceLoading
-                  ? "Connecting"
+                  ? "Updating"
                   : workspaceData?.sourceMode === "client_gateway"
                     ? "Client Gateway"
                     : workspaceData ? "Demo Gateway" : "No response"}
               </span>
+              {workspaceData && <button className="secondary-button" onClick={()=>setDetailsOpen(true)}><ShieldCheck size={13}/> Details</button>}
               <span className="generated-tag"><Zap size={12} /> Generated in {workspaceSpec.generatedIn}</span>
               <button
                 className={`icon-button compact ${filterOpen ? "active-control" : ""}`}
@@ -867,11 +876,9 @@ function WorkspaceView({
             </div>
           )}
 
-          {workspaceData && <RequestInterpretation response={workspaceData}/>}
-          {workspaceData && <WorkspaceConversation response={workspaceData} onFollowup={onFollowup} busy={isGenerating}/>}
           <div className="result-body">
             <AnimatePresence mode="wait">
-              {isGenerating ? (
+              {isGenerating && !workspaceData ? (
                 <motion.div
                   key="generation"
                   className="generation-stage"
@@ -896,7 +903,7 @@ function WorkspaceView({
                       block={block}
                       filterText={filterText}
                       setToast={setToast}
-                      onDrilldown={workspaceData?.queryPlan.groupBy && !workspaceData.queryPlan.analysis?.time ? (value)=>onFollowup(`List individual records where ${workspaceData.queryPlan.groupBy} equals ${JSON.stringify(value)}, keeping all other filters. Table only, without totals.`) : undefined}
+                      onDrilldown={!isGenerating && workspaceData?.queryPlan.groupBy && !workspaceData.queryPlan.analysis?.time ? (value)=>onFollowup(`List individual records where ${workspaceData.queryPlan.groupBy} equals ${JSON.stringify(value)}, keeping all other filters. Table only, without totals.`,false) : undefined}
                     />
                   ))}
                 </motion.div>
@@ -905,7 +912,9 @@ function WorkspaceView({
           </div>
         </section>
 
-        {workspaceData && <aside className="inspector-panel">
+        {workspaceData && <WorkspaceConversation response={workspaceData} messages={conversation} onFollowup={onFollowup} busy={isGenerating} onCancel={cancelWorkspace} onRetry={onRetry} error={workspaceError} needsClarification={needsClarification}/>}
+      </div>}
+      {workspaceData && detailsOpen && <Modal title="Workspace details" subtitle="Interpretation, data access and approved query" onClose={()=>setDetailsOpen(false)} variant="panel"><RequestInterpretation response={workspaceData}/><aside className="inspector-panel">
           <div className="inspector-tabs">
             <button className={inspector === "safety" ? "active" : ""} onClick={() => setInspector("safety")}>
               Safety
@@ -988,15 +997,14 @@ function WorkspaceView({
               >
                 <div className="query-heading">
                   <span><Code2 size={14} /> Validated JSON</span>
-                  <i>v1.2</i>
+                  <i>v1.3</i>
                 </div>
                 <pre>{queryPlan}</pre>
                 <div className="query-valid"><CheckCircle2 size={14} /> Identity verified · Gateway approved · no raw SQL</div>
               </motion.div>
             )}
           </AnimatePresence>
-        </aside>}
-      </div>
+        </aside></Modal>}
     </div>
   );
 }
@@ -1337,11 +1345,12 @@ async function requestDynamicWorkspace(
   prompt: string,
   signal?:AbortSignal,
   context?:WorkspaceContext,
+  clarification?:WorkspaceClarification,
 ): Promise<DynamicWorkspaceResponse> {
   const response = await authenticatedFetch("/api/workspaces/generate", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt, limit: 200, ...(context ? {context} : {}) }),
+    body: JSON.stringify({ prompt, limit: 200, ...(context ? {context} : {}), ...(clarification ? {clarification} : {}) }),
     signal,
   });
   const payload = (await response.json()) as

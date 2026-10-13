@@ -25,13 +25,20 @@ try{
  const chart=donut.spec.blocks.find(block=>block.type==='chart');const group=chart?.type==='chart'?chart.items[0]?.drilldownValue:undefined;assert.ok(group);
  const records=await call(endpoint.pathname,{prompt:`List individual records where relationship_manager equals ${JSON.stringify(group)}, keeping all other filters. Table only, without totals.`,context:contextFromResponse(donut),limit:200}) as DynamicWorkspaceResponse;
  assert.equal(records.queryPlan.analysis,undefined);assert.equal(records.presentation?.tableLayout,'records');assert.ok(records.queryPlan.filters.some(filter=>filter.field==='relationship_manager'&&filter.value===group));assert.ok(records.queryPlan.filters.some(filter=>filter.field==='total_premium'&&filter.value===20000));report('chart-drilldown');
+ const unresolved='Show premium growth.';
+ const clarificationResponse=await fetch(new URL(endpoint.pathname,endpoint),{method:'POST',redirect:'error',headers,body:JSON.stringify({prompt:unresolved,context:contextFromResponse(donut),limit:200}),signal:AbortSignal.timeout(45_000)});
+ assert.equal(clarificationResponse.status,422);const clarificationBody=await clarificationResponse.json() as {error:string;code:string};assert.equal(clarificationBody.code,'unsupported_workspace_request');report('followup-clarification');
+ const clarified=await call(endpoint.pathname,{prompt:'Monthly percentage growth, January to March 2026, coverage start date, across all managers. Line chart only.',context:contextFromResponse(donut),clarification:{request:unresolved,question:clarificationBody.error},limit:200}) as DynamicWorkspaceResponse;
+ assert.equal(clarified.queryPlan.analysis?.time?.field,'start_date');assert.equal(clarified.queryPlan.analysis?.comparison,'previous_bucket');assert.ok(clarified.queryPlan.filters.some(filter=>filter.field==='total_premium'&&filter.value===20000));assert.equal(clarified.spec.blocks[0].type==='chart'&&clarified.spec.blocks[0].variant,'line');report('clarification-answer-preserves-context');
+ const short=await call(endpoint.pathname,{prompt:'Table',context:contextFromResponse(clarified),limit:200}) as DynamicWorkspaceResponse;
+ assert.equal(short.spec.blocks.length,1);assert.equal(short.spec.blocks[0].type,'table');report('short-chat-answer');
  const id=crypto.randomUUID(),title=`Synthetic verification ${id}`;created.push(id);
- await call('/api/app-state',{action:'save_workspace',workspace:{id,title,prompt:'Saved synthetic premium donut',savedAt:new Date().toISOString(),data:null,pinned:false,definition:contextFromResponse(donut)}});
+ await call('/api/app-state',{action:'save_workspace',workspace:{id,title,prompt:'Table',savedAt:new Date().toISOString(),data:null,pinned:false,definition:contextFromResponse(short)}});
  await call('/api/app-state',{action:'update_workspace',id,title:`${title} renamed`});
  await call('/api/app-state',{action:'duplicate_workspace',id});
  const state=await call('/api/app-state') as AppStateBootstrap;
  const copies=state.savedWorkspaces.filter(item=>item.title.startsWith(title));for(const item of copies)if(!created.includes(item.id))created.push(item.id);
- assert.equal(copies.length,2);for(const item of copies){assert.equal(item.data,null);assert.equal(item.definition?.visualization,'donut');assert.deepEqual(item.definition?.plan.filters,donut.queryPlan.filters);}report('save-rename-duplicate-definitions');
+ assert.equal(copies.length,2);for(const item of copies){assert.equal(item.data,null);assert.equal(item.definition?.visualization,'table');assert.deepEqual(item.definition?.plan.filters,donut.queryPlan.filters);}report('save-rename-duplicate-definitions');
 }catch{console.log(JSON.stringify({passed:false,scenario:'live-followup-flow'}));process.exitCode=1;}
 finally{for(const id of created){try{await call('/api/app-state',{action:'update_workspace',id,delete:true});}catch{console.log(JSON.stringify({passed:false,scenario:'temporary-definition-cleanup'}));process.exitCode=1;}}}
-console.log(JSON.stringify({benchmark:'guided-demo-v1',passed,total:6}));
+console.log(JSON.stringify({benchmark:'guided-demo-v1',passed,total:9}));

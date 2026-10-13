@@ -25,10 +25,12 @@ const savedWorkspaceSchema = z.object({
   definition: workspaceContextSchema.optional(),
   id: z.string().uuid(),
   title: z.string().trim().min(1).max(160),
-  prompt: z.string().trim().min(8).max(500),
+  prompt: z.string().trim().min(1).max(500),
   savedAt: z.string(),
   data: z.unknown().nullable(),
   pinned: z.boolean().default(false),
+}).superRefine((workspace,ctx)=>{
+  if(!workspace.definition && workspace.prompt.length<8)ctx.addIssue({code:"custom",path:["prompt"],message:"Short saved requests require a workspace definition."});
 });
 
 const accessRuleSchema = z.object({
