@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {startConversation,appendAssistantMessage,continueClarification} from '../lib/workspaces/conversation';
+import {startConversation,appendAssistantMessage,continueClarification,clarificationForReply} from '../lib/workspaces/conversation';
 test('follow-ups retain the existing conversation but new workspaces start fresh',()=>{
  const initial=appendAssistantMessage(startConversation([],'Show policies',false),'Built a policy table.');
  assert.equal(startConversation(initial,'Make this a donut',true).length,3);
@@ -25,4 +25,22 @@ test('multiple clarification answers retain the original request and bounded ans
  assert.equal(second.request,'Show premium growth');assert.deepEqual(second.answers,['January to March 2026']);
  let next=second;for(let i=0;i<10;i++)next=continueClarification(next,`Answer ${i}`,'Please clarify');
  assert.equal(next.answers?.length,6);assert.equal(next.request,'Show premium growth');
+});
+
+test('initial clarification renders a usable chat without a generated workspace',async()=>{
+ const {createElement}=await import('react');
+ const {renderToStaticMarkup}=await import('react-dom/server');
+ const {WorkspaceConversation}=await import('../app/components/workspace-conversation');
+ const messages=appendAssistantMessage(startConversation([],'Show premium growth',false),'Which date basis and period should I use?','error');
+ const html=renderToStaticMarkup(createElement(WorkspaceConversation,{response:null,messages,onFollowup:()=>{},busy:false,onCancel:()=>{},onRetry:()=>{},error:'Which date basis and period should I use?',needsClarification:true}));
+ assert.match(html,/Which date basis and period should I use/);assert.match(html,/Reply below to clarify/);assert.match(html,/Send message/);
+ assert.doesNotMatch(html,/last successful workspace is still visible|Donut chart|Refresh<|Table only/);
+});
+
+test('initial replies and replies after cancellation or provider failure retain the pending question',()=>{
+ const initial=clarificationForReply(undefined,'Show premium growth','Which period?');
+ assert.equal(initial?.request,'Show premium growth');
+ const next=clarificationForReply(initial,'January to March 2026',null);
+ assert.equal(next?.request,'Show premium growth');assert.equal(next?.question,'Which period?');assert.deepEqual(next?.answers,['January to March 2026']);
+ assert.equal(clarificationForReply(undefined,'Unrelated request',null),undefined);
 });

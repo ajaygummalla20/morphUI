@@ -71,3 +71,7 @@ test('short follow-up workspaces can be saved with definitions, but not as bare 
  assert.equal((await POST(request({action:'save_workspace',workspace:{...workspace,id:crypto.randomUUID(),definition:undefined}}))).status,400);
  assert.equal((await POST(request({action:'update_workspace',id,delete:true}))).status,200);
 });
+
+test('initial clarification replies never fall back to interpreting the answer alone',async()=>{
+ await assert.rejects(planWorkspaceRequestWithAi('Monthly',insuranceSemanticCatalog,200,{allowFallback:true,clarification:{request:'Show premium growth',question:'Which period?'},generateProposal:async()=>{throw {statusCode:429};}}),/quota|rate limit/i);
+});

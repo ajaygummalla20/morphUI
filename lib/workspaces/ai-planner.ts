@@ -159,7 +159,7 @@ export async function planWorkspaceRequestWithAi(
 ): Promise<WorkspacePlannerResult> {
   options.abortSignal?.throwIfAborted();
   const context=options.context ? validateWorkspaceContext(options.context,catalog) : undefined;
-  const fallbackAllowed=Boolean(options.allowFallback) && !context;
+  const fallbackAllowed=Boolean(options.allowFallback) && !context && !options.clarification;
   const configuredProvider = options.provider ?? process.env.MORPH_PLANNER_PROVIDER ?? "openai";
   if (configuredProvider !== "openai" && configuredProvider !== "google") {
     if (!fallbackAllowed || options.requireAi) throw new WorkspacePlannerUnavailableError("not_configured");

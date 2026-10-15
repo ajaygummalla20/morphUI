@@ -70,7 +70,7 @@ import { GenerationProgress } from './components/generation-progress';
 import {DemoGuide} from './components/demo-guide';
 import {WorkspaceConversation,RequestInterpretation} from './components/workspace-conversation';
 import {contextFromResponse,type WorkspaceContext,type WorkspaceClarification} from '@/lib/workspaces/context';
-import {startConversation,appendAssistantMessage,continueClarification,type ConversationMessage} from "@/lib/workspaces/conversation";
+import {startConversation,appendAssistantMessage,clarificationForReply,type ConversationMessage} from "@/lib/workspaces/conversation";
 import { WorkspaceRequestError } from '@/lib/workspaces/client-error';
 
 type SectionId = "workspaces" | "sources" | "rules" | "audit";
@@ -123,6 +123,7 @@ function WorkspaceApp() {
   );
   const [saved, setSaved] = useState(false);
   const [conversation,setConversation]=useState<ConversationMessage[]>([]);
+  const [chatOpen,setChatOpen]=useState(false);
   const [inspector, setInspector] = useState<"safety" | "query">("safety");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -248,7 +249,7 @@ function WorkspaceApp() {
     setNeedsClarification(false);
     setWorkspaceLoading(true);
     if(!context)setWorkspaceData(null);
-    setConversation(messages=>startConversation(messages,requestPrompt,!!context));
+    setConversation(messages=>startConversation(messages,requestPrompt,!!context||!!clarification));
     setPhase("understanding");
     requestController.current?.abort();
     const sequence=++requestSequence.current;
@@ -256,7 +257,7 @@ function WorkspaceApp() {
     try {
       const response = await requestDynamicWorkspace(requestPrompt,controller.signal,context,clarification);
       if(sequence!==requestSequence.current)return;
-      setWorkspaceData(response);
+      setWorkspaceData(response);setChatOpen(true);setRetryClarification(undefined);
       setConversation(messages=>appendAssistantMessage(messages,`${response.interpretation} ${context ? "The workspace has been updated." : "Your workspace is ready. Ask me to change the format, filters or grouping."}`));
       setResultPrompt(displayPrompt??requestPrompt);
       setRetryContext(context ? contextFromResponse(response) : undefined);
@@ -275,6 +276,7 @@ function WorkspaceApp() {
       setPhase("ready");
       setWorkspaceError(message);
       setNeedsClarification(error instanceof WorkspaceRequestError && error.needsClarification);
+      if(error instanceof WorkspaceRequestError && error.needsClarification)setChatOpen(true);
       if(!context)setWorkspaceData(null);
       setConversation(messages=>appendAssistantMessage(messages,message,"error"));
       setToast("Request needs attention — see the message above");
@@ -291,7 +293,7 @@ function WorkspaceApp() {
 
   const updatePrompt = (value: string, preserveContext=false) => {
     requestSequence.current++; requestController.current?.abort();
-    setPrompt(value); setSaved(false); setWorkspaceData(null);setConversation([]);setRetryClarification(undefined); setRetryPrompt(undefined);if(!preserveContext)setRetryContext(undefined);
+    setPrompt(value); setSaved(false); setWorkspaceData(null);setConversation([]);setChatOpen(false);setRetryClarification(undefined); setRetryPrompt(undefined);if(!preserveContext)setRetryContext(undefined);
     setPhase("ready"); setWorkspaceLoading(false); setWorkspaceError(null); setNeedsClarification(false);
   };
 
@@ -398,7 +400,7 @@ function WorkspaceApp() {
 
   const cancelWorkspace = () => {
     requestSequence.current++; requestController.current?.abort();
-    setPhase("ready"); setSaved(false); setWorkspaceLoading(false); setWorkspaceError(null); setNeedsClarification(false);
+    setPhase("ready"); setSaved(false); setWorkspaceLoading(false); setWorkspaceError(workspaceData?null:retryClarification?.question??null); setNeedsClarification(!workspaceData&&!!retryClarification);
     if(workspaceData){setPrompt(resultPrompt);setRetryContext(contextFromResponse(workspaceData));setRetryPrompt(undefined);setRetryClarification(undefined);}
     setConversation(messages=>appendAssistantMessage(messages,workspaceData ? "Cancelled. Your last successful workspace is unchanged." : "Generation cancelled. You can try again.","cancelled"));
     setToast("Generation cancelled");
@@ -409,12 +411,12 @@ function WorkspaceApp() {
     const sequence=++requestSequence.current;
     const controller=new AbortController();requestController.current=controller;
     setPhase('understanding');setWorkspaceError(null);setNeedsClarification(false);
-    setRetryClarification(undefined);
+    setChatOpen(false);setRetryClarification(undefined);
     setConversation(startConversation([],item.prompt,false));
     setPrompt(item.prompt);setRetryContext(item.definition);setRetryPrompt(item.definition ? "Refresh this workspace without changing its query or display." : item.prompt);
     setWorkspaceData(null);
     setWorkspaceLoading(true);
-    void requestDynamicWorkspace(item.definition ? 'Refresh this workspace without changing its query or display.' : item.prompt,controller.signal,item.definition).then(data=>{if(sequence===requestSequence.current){setWorkspaceData(data);setResultPrompt(item.prompt);setWorkspaceError(null);setConversation(messages=>appendAssistantMessage(messages,`${data.interpretation} Reopened with freshly authorized data.`));}}).catch(error=>{if(sequence===requestSequence.current){setWorkspaceError(error instanceof Error?error.message:'Could not reopen workspace.');setConversation(messages=>appendAssistantMessage(messages,error instanceof Error?error.message:'Could not reopen workspace.',"error"));setNeedsClarification(error instanceof WorkspaceRequestError && error.needsClarification);}}).finally(()=>{if(sequence===requestSequence.current){setWorkspaceLoading(false);setPhase("ready");}});
+    void requestDynamicWorkspace(item.definition ? 'Refresh this workspace without changing its query or display.' : item.prompt,controller.signal,item.definition).then(data=>{if(sequence===requestSequence.current){setWorkspaceData(data);setChatOpen(true);setResultPrompt(item.prompt);setWorkspaceError(null);setConversation(messages=>appendAssistantMessage(messages,`${data.interpretation} Reopened with freshly authorized data.`));}}).catch(error=>{if(sequence===requestSequence.current){setWorkspaceError(error instanceof Error?error.message:'Could not reopen workspace.');setConversation(messages=>appendAssistantMessage(messages,error instanceof Error?error.message:'Could not reopen workspace.',"error"));setNeedsClarification(error instanceof WorkspaceRequestError && error.needsClarification);if(error instanceof WorkspaceRequestError && error.needsClarification)setChatOpen(true);}}).finally(()=>{if(sequence===requestSequence.current){setWorkspaceLoading(false);setPhase("ready");}});
     setSaved(true);
     chooseSection("workspaces");
     setToast(`Fetching fresh data for ${item.title}`);
@@ -567,6 +569,7 @@ function WorkspaceApp() {
             {section === 'workspaces' && <SavedWorkspaces items={savedWorkspaces} onOpen={openSavedWorkspace} onRefresh={async()=>{const state=await requestAppStateBootstrap();setSavedWorkspaces(state.savedWorkspaces);}} />}
             {section === "workspaces" && (
               <WorkspaceView
+                chatOpen={chatOpen}
                 conversation={conversation}
                 onRetry={()=>{void generateWorkspace(retryPrompt,retryContext,prompt,retryClarification);}}
                 prompt={prompt}
@@ -574,7 +577,7 @@ function WorkspaceApp() {
                 onNewPrompt={updatePrompt}
                 phase={phase}
                 generateWorkspace={()=>{void generateWorkspace(workspaceData ? "Refresh this workspace without changing its query or display." : retryPrompt,workspaceData ? contextFromResponse(workspaceData) : retryContext,workspaceData ? resultPrompt : prompt,workspaceData ? undefined : retryClarification);}}
-                onFollowup={(value,reply=true)=>{if(workspaceData)void generateWorkspace(value,contextFromResponse(workspaceData),undefined,reply&&needsClarification&&retryPrompt&&workspaceError ? continueClarification(retryClarification,retryPrompt,workspaceError) : undefined);}}
+                onFollowup={(value,reply=true)=>{if(workspaceData||chatOpen)void generateWorkspace(value,workspaceData?contextFromResponse(workspaceData):retryContext,undefined,reply ? clarificationForReply(retryClarification,retryPrompt,needsClarification?workspaceError:null) : undefined);}}
                 cancelWorkspace={cancelWorkspace}
                 needsClarification={needsClarification}
                 inspector={inspector}
@@ -663,6 +666,7 @@ function WorkspaceApp() {
 }
 
 function WorkspaceView({
+  chatOpen,
   conversation,
   onRetry,
   prompt,
@@ -686,6 +690,7 @@ function WorkspaceView({
   workspaceLoading,
   onOpenSources,
 }: {
+  chatOpen: boolean;
   conversation: ConversationMessage[];
   onRetry: ()=>void;
   prompt: string;
@@ -720,25 +725,25 @@ function WorkspaceView({
   );
 
   return (
-    <div className={`workspace-page ${workspaceData ? "workspace-built" : "workspace-start"}`}>
+    <div className={`workspace-page ${workspaceData ? "workspace-built" : chatOpen ? "workspace-chat-only" : "workspace-start"}`}>
       <section className="workspace-intro">
         <div>
           <div className="intro-kicker"><Sparkles size={14} /> {workspaceData ? "Your workspace" : "From a question to a workspace"}</div>
-          <h2>{workspaceData ? workspaceSpec.title : "What would you like to work on?"}</h2>
-          <p>{workspaceData ? "Explore your data here. Refine the view in the conversation alongside it." : "Describe what you need. Build your view, then shape it in conversation."}</p>
+          <h2>{workspaceData ? workspaceSpec.title : chatOpen ? "Let’s shape your workspace" : "What would you like to work on?"}</h2>
+          <p>{workspaceData ? "Explore your data here. Refine the view in the conversation alongside it." : chatOpen ? "Answer Morph’s question below. Your original request stays in the conversation." : "Describe what you need. Build your view, then shape it in conversation."}</p>
         </div>
-        {workspaceData && <div className="workspace-heading-actions"><button className="secondary-button" onClick={()=>onNewPrompt("")}>New workspace</button>
-        <button
+        {(workspaceData||chatOpen) && <div className="workspace-heading-actions"><button className="secondary-button" onClick={()=>onNewPrompt("")}>New workspace</button>
+        {workspaceData && <button
           className={`secondary-button ${saved ? "saved" : ""}`}
           onClick={onSave}
           disabled={!workspaceData || isGenerating || !!workspaceError}
         >
           {saved ? <Check size={15} /> : <Save size={15} />}
           {saved ? "Saved" : "Save workspace"}
-        </button></div>}
+        </button>}</div>}
       </section>
 
-      {!workspaceData && <section className="prompt-card">
+      {!workspaceData && !chatOpen && <section className="prompt-card">
         <div className="prompt-orb"><WandSparkles size={19} /></div>
         <div className="prompt-main">
           <label htmlFor="workspace-prompt">Describe your workspace</label>
@@ -773,7 +778,7 @@ function WorkspaceView({
         </div>
       </section>}
 
-      {!workspaceData && <div className="suggestion-row" aria-label="Prompt suggestions">
+      {!workspaceData && !chatOpen && <div className="suggestion-row" aria-label="Prompt suggestions">
         <span>Try</span>
         <button onClick={() => onNewPrompt("Show motor policies expiring in the next 15 days above ₹20,000.")}>Upcoming renewals</button>
         <button onClick={() => onNewPrompt("Show high-value claims reported this month by branch.")}>High-value claims</button>
@@ -791,7 +796,7 @@ function WorkspaceView({
         </p>
       )}
 
-      {workspaceError && !workspaceData && (
+      {workspaceError && !workspaceData && !chatOpen && (
         <div className="workspace-alert" role="alert">
           <Database size={14} />
           <div><strong>{needsClarification ? "Let’s clarify your request" : "Generation needs attention"}</strong><p>{workspaceError}</p>{needsClarification && <p>Edit the request above and select Build workspace.</p>}</div>
@@ -799,8 +804,8 @@ function WorkspaceView({
         </div>
       )}
 
-      {(workspaceData || isGenerating) && <div className={`workspace-grid ${workspaceData ? "" : "single-column"}`}>
-        <section className="result-panel">
+      {(workspaceData || isGenerating || chatOpen) && <div className={`workspace-grid ${workspaceData ? "" : "single-column"}`}>
+        {(workspaceData || (!chatOpen && isGenerating)) && <section className="result-panel">
           <div className="result-toolbar">
             <div className="result-title">
               <span className="live-dot" />
@@ -910,9 +915,9 @@ function WorkspaceView({
               )}
             </AnimatePresence>
           </div>
-        </section>
+        </section>}
 
-        {workspaceData && <WorkspaceConversation response={workspaceData} messages={conversation} onFollowup={onFollowup} busy={isGenerating} onCancel={cancelWorkspace} onRetry={onRetry} error={workspaceError} needsClarification={needsClarification}/>}
+        {chatOpen && <WorkspaceConversation response={workspaceData} messages={conversation} onFollowup={onFollowup} busy={isGenerating} onCancel={cancelWorkspace} onRetry={onRetry} error={workspaceError} needsClarification={needsClarification}/>}
       </div>}
       {workspaceData && detailsOpen && <Modal title="Workspace details" subtitle="Interpretation, data access and approved query" onClose={()=>setDetailsOpen(false)} variant="panel"><RequestInterpretation response={workspaceData}/><aside className="inspector-panel">
           <div className="inspector-tabs">

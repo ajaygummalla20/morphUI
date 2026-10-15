@@ -11,3 +11,8 @@ export function appendAssistantMessage(messages:ConversationMessage[],content:st
 export function continueClarification(previous:WorkspaceClarification|undefined,lastRequest:string,question:string):WorkspaceClarification {
  return {request:previous?.request??lastRequest,question,answers:previous?[...(previous.answers??[]),lastRequest].slice(-6):[]};
 }
+
+export function clarificationForReply(previous:WorkspaceClarification|undefined,lastRequest:string|undefined,question:string|null):WorkspaceClarification|undefined {
+ const activeQuestion=question??previous?.question;
+ return lastRequest&&activeQuestion?continueClarification(previous,lastRequest,activeQuestion):undefined;
+}

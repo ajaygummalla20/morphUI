@@ -14,6 +14,11 @@ async function call(path:string,body?:unknown){
 let passed=0;const created:string[]=[];
 const report=(id:string)=>{passed++;console.log(JSON.stringify({id,passed:true}));};
 try{
+ const initialRequest='Show premium growth.';
+ const initialResponse=await fetch(new URL(endpoint.pathname,endpoint),{method:'POST',redirect:'error',headers,body:JSON.stringify({prompt:initialRequest,limit:200}),signal:AbortSignal.timeout(45_000)});
+ assert.equal(initialResponse.status,422);const initialQuestion=await initialResponse.json() as {error:string;code:string};assert.equal(initialQuestion.code,'unsupported_workspace_request');report('initial-clarification-question');
+ const initialAnswer=await call(endpoint.pathname,{prompt:'Monthly percentage growth in total policy premium, January through March 2026, coverage start date, line chart only.',clarification:{request:initialRequest,question:initialQuestion.error},limit:200}) as DynamicWorkspaceResponse;
+ assert.equal(initialAnswer.queryPlan.entity,'policies');assert.equal(initialAnswer.queryPlan.analysis?.time?.field,'start_date');assert.equal(initialAnswer.queryPlan.analysis?.comparison,'previous_bucket');report('initial-clarification-answer-builds-workspace');
  const base=await call(endpoint.pathname,{prompt:'Show total written premium by relationship manager for policies with premium above 20000. Normal table only.',limit:200}) as DynamicWorkspaceResponse;
  const context=contextFromResponse(base);assert.equal(base.queryPlan.analysis?.metricId,'written_premium');assert.equal(base.presentation?.tableLayout,'grouped_summary');report('base-table');
  const donut=await call(endpoint.pathname,{prompt:'Make this a donut chart only.',context,limit:200}) as DynamicWorkspaceResponse;
@@ -41,4 +46,4 @@ try{
  assert.equal(copies.length,2);for(const item of copies){assert.equal(item.data,null);assert.equal(item.definition?.visualization,'table');assert.deepEqual(item.definition?.plan.filters,donut.queryPlan.filters);}report('save-rename-duplicate-definitions');
 }catch{console.log(JSON.stringify({passed:false,scenario:'live-followup-flow'}));process.exitCode=1;}
 finally{for(const id of created){try{await call('/api/app-state',{action:'update_workspace',id,delete:true});}catch{console.log(JSON.stringify({passed:false,scenario:'temporary-definition-cleanup'}));process.exitCode=1;}}}
-console.log(JSON.stringify({benchmark:'guided-demo-v1',passed,total:9}));
+console.log(JSON.stringify({benchmark:'guided-demo-v1',passed,total:11}));
