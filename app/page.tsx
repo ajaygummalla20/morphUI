@@ -68,6 +68,7 @@ import { SessionGate, authenticatedFetch } from './components/session-gate';
 import { SavedWorkspaces } from './components/saved-workspaces';
 import { GenerationProgress } from './components/generation-progress';
 import {DemoGuide} from './components/demo-guide';
+import {demoSteps,demoStepMatches,advanceDemoStep} from '@/lib/workspaces/demo';
 import {WorkspaceConversation,RequestInterpretation} from './components/workspace-conversation';
 import {contextFromResponse,type WorkspaceContext,type WorkspaceClarification} from '@/lib/workspaces/context';
 import {startConversation,appendAssistantMessage,clarificationForReply,type ConversationMessage} from "@/lib/workspaces/conversation";
@@ -150,7 +151,9 @@ function WorkspaceApp() {
   const [workspaceLoading, setWorkspaceLoading] = useState(false);
   const [needsClarification,setNeedsClarification]=useState(false);
   const [showGuide,setShowGuide]=useState(false);
-  const [presentationMode,setPresentationMode]=useState(false);
+  const [demoStep,setDemoStep]=useState(0);
+  const [demoError,setDemoError]=useState<string|null>(null);
+  const demoSequence=useRef(0);
   const [resultPrompt,setResultPrompt]=useState("");
   const [retryContext,setRetryContext]=useState<WorkspaceContext|undefined>();
   const [retryPrompt,setRetryPrompt]=useState<string|undefined>();
@@ -258,6 +261,7 @@ function WorkspaceApp() {
       const response = await requestDynamicWorkspace(requestPrompt,controller.signal,context,clarification);
       if(sequence!==requestSequence.current)return;
       setWorkspaceData(response);setChatOpen(true);setRetryClarification(undefined);
+      if(showGuide&&demoStepMatches(demoStep,response)){setDemoStep(advanceDemoStep(demoStep,response));setDemoError(null);}
       setConversation(messages=>appendAssistantMessage(messages,`${response.interpretation} ${context ? "The workspace has been updated." : "Your workspace is ready. Ask me to change the format, filters or grouping."}`));
       setResultPrompt(displayPrompt??requestPrompt);
       setRetryContext(context ? contextFromResponse(response) : undefined);
@@ -267,6 +271,7 @@ function WorkspaceApp() {
           ? "Workspace rebuilt through the client Gateway"
           : "Workspace rebuilt through the secure demo Gateway",
       );
+      return response;
     } catch (error) {
       if(sequence!==requestSequence.current)return;
       const message =
@@ -292,6 +297,7 @@ function WorkspaceApp() {
   };
 
   const updatePrompt = (value: string, preserveContext=false) => {
+    if(showGuide){demoSequence.current++;setShowGuide(false);setDemoStep(0);setDemoError(null);}
     requestSequence.current++; requestController.current?.abort();
     setPrompt(value); setSaved(false); setWorkspaceData(null);setConversation([]);setChatOpen(false);setRetryClarification(undefined); setRetryPrompt(undefined);if(!preserveContext)setRetryContext(undefined);
     setPhase("ready"); setWorkspaceLoading(false); setWorkspaceError(null); setNeedsClarification(false);
@@ -407,6 +413,7 @@ function WorkspaceApp() {
   };
 
   const openSavedWorkspace = (item: SavedWorkspace) => {
+    demoSequence.current++;setShowGuide(false);setDemoStep(0);setDemoError(null);
     requestController.current?.abort();
     const sequence=++requestSequence.current;
     const controller=new AbortController();requestController.current=controller;
@@ -422,8 +429,24 @@ function WorkspaceApp() {
     setToast(`Fetching fresh data for ${item.title}`);
   };
 
+  const startDemo = () => {
+    demoSequence.current++;updatePrompt("");setDemoStep(0);setDemoError(null);setShowGuide(true);chooseSection("workspaces");
+  };
+  const finishDemo = () => {
+    demoSequence.current++;if(workspaceLoading)cancelWorkspace();setShowGuide(false);setDemoError(null);
+  };
+  const runDemoStep = async () => {
+    if(workspaceLoading||demoStep>=demoSteps.length)return;
+    if(demoStep>0&&!demoStepMatches(demoStep-1,workspaceData)){setDemoError("The workspace has changed outside this tour. Start over for the guided example, or exit the demo to explore freely.");return;}
+    const run=++demoSequence.current,index=demoStep;setDemoError(null);
+    const response=await generateWorkspace(demoSteps[index].prompt,index>0&&workspaceData?contextFromResponse(workspaceData):undefined);
+    if(run!==demoSequence.current)return;
+    if(demoStepMatches(index,response))setDemoStep(advanceDemoStep(index,response));
+    else setDemoError(response?"The result did not match this step. Start over to repeat the guided example, or exit the demo to explore this result.":"This step was not completed. Try it again, or exit the demo and start a new request.");
+  };
+
   return (
-    <main className={`app-shell ${presentationMode ? "presentation-mode" : ""}`}>
+    <main className={`app-shell ${showGuide ? "presentation-mode" : ""}`} >
       <div className="ambient ambient-one" />
       <div className="ambient ambient-two" />
 
@@ -533,8 +556,7 @@ function WorkspaceApp() {
             </div>
           </div>
           <div className="topbar-actions">
-            <button className="secondary-button" aria-pressed={showGuide} onClick={()=>{setShowGuide(value=>!value);chooseSection("workspaces");}}>Guided demo</button>
-            <button className="secondary-button" aria-pressed={presentationMode} onClick={()=>{setPresentationMode(value=>!value);chooseSection("workspaces");}}>{presentationMode ? "Exit presentation" : "Present"}</button>
+            <button className="secondary-button" aria-pressed={showGuide} disabled={workspaceLoading&&!showGuide} onClick={showGuide?finishDemo:startDemo}>{showGuide ? "Exit demo" : "Start demo"}</button>
             <div className={`persistence-pill ${persistenceMode}`}>
               {persistenceMode === "cloud" ? (
                 <><CheckCircle2 size={13} /> Cloud saved</>
@@ -565,9 +587,9 @@ function WorkspaceApp() {
             exit={reduceMotion ? undefined : { opacity: 0, y: -6 }}
             transition={{ duration: 0.24 }}
           >
-            {section === 'workspaces' && showGuide && <DemoGuide busy={workspaceLoading} onSelect={updatePrompt}/> }
+            {section === 'workspaces' && showGuide && <DemoGuide step={demoStep} busy={workspaceLoading} onRun={()=>{void runDemoStep();}} onRestart={startDemo} onFinish={finishDemo} onCancel={cancelWorkspace} error={workspaceError || demoError} needsClarification={needsClarification} response={workspaceData}/> }
             {section === 'workspaces' && <SavedWorkspaces items={savedWorkspaces} onOpen={openSavedWorkspace} onRefresh={async()=>{const state=await requestAppStateBootstrap();setSavedWorkspaces(state.savedWorkspaces);}} />}
-            {section === "workspaces" && (
+            {section === "workspaces" && (!showGuide || !!workspaceData || chatOpen) && (
               <WorkspaceView
                 chatOpen={chatOpen}
                 conversation={conversation}

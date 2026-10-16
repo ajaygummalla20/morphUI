@@ -234,7 +234,7 @@ Existing PostgreSQL analytics tests verify arithmetic against fixtures: full-pop
 
 ### Guided demo and workspace follow-ups
 
-Select **Guided demo** to walk through Operations, Claims Analyst, Executive and Trust examples. These are presentation personas, not impersonation or permission controls. **Present** focuses the interface while keeping the Gateway/data-source labels visible.
+Select **Start demo** for a focused three-step walkthrough: request a premium table, reshape it through chat, and narrow it with a filter. **Exit demo** restores normal navigation. The source badge distinguishes sample data from connected data; the tour does not change identity or permissions.
 
 After generating a workspace, **Refine this workspace** accepts changes such as “Show the same result in a normal table only.” The planner receives only the previous query definition and presentation preferences, never returned rows. Existing filters must be preserved unless the model explicitly identifies an intentional filter change. Every revised plan is validated against the current catalogue and independently authorized by the Gateway. Follow-ups never use rule-based compatibility fallback. Changing datasets requires starting a new workspace.
 
@@ -243,3 +243,7 @@ Category chart controls open a fresh, authorized records query for that group. R
 ### Workspace and chat experience
 
 The Workspaces page starts with a focused request composer. If Morph needs clarification, the chat opens immediately, even before a workspace exists, and replies continue the original request. After successful generation, the main canvas displays the workspace beside that same conversation (below the canvas on smaller screens). Follow-ups keep the last successful response visible during planning, clarification, errors and cancellation. The panel records a bounded, session-local transcript; it is not sent as result data to the model or saved as query results. Clarification answers include only the unresolved request and question so the planner can resolve a short answer correctly. Data-access information, request interpretation and the approved query remain available through **Details**. **New workspace** clears the current conversation and query context.
+
+### Three-step product demo
+
+**Start demo** opens a focused, linear walkthrough: build a premium-by-manager table, change it to a donut through chat, then filter policies above ₹30,000. Each button executes the same AI/Gateway path as a normal request. Progress advances only when the returned query and display match the step; errors and cancellation never mark it complete. A source badge distinguishes sample and connected data. **Exit demo** restores the normal interface, and **Continue with my own questions** keeps the final workspace available for exploration. The tour replaces the former persona tabs and separate presentation toggle.
