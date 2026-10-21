@@ -16,7 +16,7 @@
     "test:gateway": "bash scripts/sites-env.sh -- node --import tsx --import ./tests/helpers/demo-api.ts --test tests/gateway-policy.test.ts tests/gateway-catalog.test.ts tests/gateway-response.test.ts",
     "test:gateway-service": "npm test --prefix gateway",
     "test:gateway-postgres": "bash scripts/sites-env.sh -- node --import tsx --test tests/gateway-postgres.test.ts tests/gateway-analytics-postgres.test.ts tests/gateway-analysis-validation.test.ts",
-    "test:workspace": "bash scripts/sites-env.sh -- node --import tsx --import ./tests/helpers/demo-api.ts --test tests/dynamic-workspace.test.ts tests/semantic-catalog.test.ts tests/planner-provider.test.ts tests/workspace-export.test.ts tests/request-understanding.test.ts tests/workspace-analysis.test.ts tests/planner-api-failure.test.ts tests/planner-benchmark.test.ts tests/workspace-followup.test.ts tests/workspace-conversation.test.ts tests/demo-tour.test.ts",
+    "test:workspace": "bash scripts/sites-env.sh -- node --import tsx --import ./tests/helpers/demo-api.ts --test tests/dynamic-workspace.test.ts tests/semantic-catalog.test.ts tests/planner-provider.test.ts tests/workspace-export.test.ts tests/request-understanding.test.ts tests/workspace-analysis.test.ts tests/planner-api-failure.test.ts tests/planner-benchmark.test.ts tests/workspace-followup.test.ts tests/workspace-conversation.test.ts tests/demo-tour.test.ts tests/ag-ui.test.ts",
     "validate:artifact": "bash scripts/validate-artifact.sh",
     "lint": "bash scripts/sites-env.sh -- eslint . --ignore-pattern dist --ignore-pattern .next",
     "typecheck": "tsc --noEmit",
@@ -44,9 +44,12 @@
     "planner:verify-followups": "node --import tsx scripts/verify-live-followups.ts",
     "planner:verify-live": "node --import tsx scripts/verify-live-planner.ts",
     "gateway:smoke": "node --import tsx scripts/gateway-postgres-smoke.ts",
-    "check": "npm run typecheck && npm run lint && npm run test:security && npm run test:workspace && npm run test:gateway && npm run test:gateway-service && npm run test:gateway-postgres && npm run test:app-state && npm run test:db && npm run gateway:build && npm test && npm run audit:security"
+    "check": "npm run typecheck && npm run lint && npm run test:security && npm run test:workspace && npm run test:gateway && npm run test:gateway-service && npm run test:gateway-postgres && npm run test:app-state && npm run test:db && npm run gateway:build && npm test && npm run audit:security",
+    "planner:verify-ag-ui": "node --import tsx scripts/verify-ag-ui.ts"
   },
   "dependencies": {
+    "@ag-ui/core": "1.0.3",
+    "@ag-ui/encoder": "1.0.3",
     "@ai-sdk/google": "^4.0.70",
     "@ai-sdk/openai": "^4.0.65",
     "@faker-js/faker": "^10.5.0",
@@ -81,7 +84,7 @@
     "tsx": "^4.23.12",
     "typescript": "5.9.3",
     "vinext": "0.0.50",
-    "vite": "8.3.0",
+    "vite": "8.3.5",
     "wrangler": "4.147.0"
   },
   "overrides": {

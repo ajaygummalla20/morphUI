@@ -247,3 +247,15 @@ The Workspaces page starts with a focused request composer. If Morph needs clari
 ### Three-step product demo
 
 **Start demo** opens a focused, linear walkthrough: build a premium-by-manager table, change it to a donut through chat, then filter policies above ₹30,000. Each button executes the same AI/Gateway path as a normal request. Progress advances only when the returned query and display match the step; errors and cancellation never mark it complete. A source badge distinguishes sample and connected data. **Exit demo** restores the normal interface, and **Continue with my own questions** keeps the final workspace available for exploration. The tour replaces the former persona tabs and separate presentation toggle.
+
+### AG-UI workspace interaction
+
+The browser uses `POST /api/workspaces/agent`, an AG-UI 1.0 HTTP/SSE adapter built with the official `@ag-ui/core` and `@ag-ui/encoder` SDKs. The existing JSON generation endpoint remains available for existing clients. Both use the same generation service, rate budget, session, catalogue validator, and client Gateway.
+
+Actual execution emits `RUN_STARTED`, ordered `STEP_STARTED`/`STEP_FINISHED` events, a definitions-only `STATE_SNAPSHOT`, an assistant explanation, and a terminal event. The workspace commits only after a validated success and complete stream; interrupted, cancelled, malformed, or failed runs preserve the previous view. HTTP200 alone never means success. This is stage streaming, not model-token streaming or hidden reasoning.
+
+Clarification ends with an `input_required` interrupt and opens chat. Replies resume through bounded, replay-style context: the original request, question, and last six answers. Interrupt IDs correlate the question with its thread; they are not authorization tokens. No server checkpoint, cross-device conversation history, background jobs, or automatic reconnection is implied. Every continuation independently reauthorizes the user and query. Client state cannot grant permissions.
+
+This endpoint intentionally supports one user text message per request, no frontend tools, and only approved workspace definitions/clarification state. Result rows and Gateway credentials never enter shared planner state. Masked, authorized results travel to the browser in the final result and are not automatically persisted as an AG-UI history. Arbitrary UI code and raw SQL remain prohibited.
+
+Run `npm run planner:verify-ag-ui` with `MORPH_BENCHMARK_URL` set to the hosted generation or agent endpoint to verify the three-step real-model demo over AG-UI. Provider availability and browser visual QA are separate checks.

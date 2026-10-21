@@ -1,11 +1,12 @@
+import {interactionId} from './interaction-id';
 import type {WorkspaceClarification} from "./context";
 export type ConversationMessage={id:string;role:'user'|'assistant';content:string;kind?:'response'|'error'|'cancelled'};
 const retain=(messages:ConversationMessage[])=>messages.slice(-40);
 export function startConversation(messages:ConversationMessage[],content:string,followup:boolean):ConversationMessage[]{
- return retain([...(followup?messages:[]),{id:crypto.randomUUID(),role:'user',content}]);
+ return retain([...(followup?messages:[]),{id:interactionId(),role:'user',content}]);
 }
 export function appendAssistantMessage(messages:ConversationMessage[],content:string,kind:ConversationMessage['kind']='response'):ConversationMessage[]{
- return retain([...messages,{id:crypto.randomUUID(),role:'assistant',content,kind}]);
+ return retain([...messages,{id:interactionId(),role:'assistant',content,kind}]);
 }
 
 export function continueClarification(previous:WorkspaceClarification|undefined,lastRequest:string,question:string):WorkspaceClarification {

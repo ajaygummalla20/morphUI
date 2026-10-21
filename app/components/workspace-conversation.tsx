@@ -4,7 +4,7 @@ import {ArrowUp,LoaderCircle,MessageSquare,Sparkles} from 'lucide-react';
 import type {DynamicWorkspaceResponse} from '@/lib/workspaces/dynamic';
 import type {ConversationMessage} from '@/lib/workspaces/conversation';
 
-export function WorkspaceConversation({response,messages,onFollowup,busy,onCancel,onRetry,error,needsClarification}:{response:DynamicWorkspaceResponse|null;messages:ConversationMessage[];onFollowup:(prompt:string,reply?:boolean)=>void;busy:boolean;onCancel:()=>void;onRetry:()=>void;error:string|null;needsClarification:boolean}){
+export function WorkspaceConversation({response,messages,onFollowup,busy,onCancel,onRetry,error,needsClarification,progressLabel}:{response:DynamicWorkspaceResponse|null;messages:ConversationMessage[];onFollowup:(prompt:string,reply?:boolean)=>void;busy:boolean;onCancel:()=>void;onRetry:()=>void;error:string|null;needsClarification:boolean;progressLabel?:string}){
  const [text,setText]=useState('');
  const history=useRef<HTMLDivElement>(null);
  const followBottom=useRef(true);
@@ -17,7 +17,7 @@ export function WorkspaceConversation({response,messages,onFollowup,busy,onCance
   <header className="chat-heading"><span className="chat-mark"><MessageSquare size={17}/></span><div><h3>{response ? "Chat with your workspace" : "Let’s clarify your request"}</h3><p>{response ? "Shape this view, one request at a time." : "Answer a question so Morph can build the right view."}</p></div></header>
   <div className="chat-history" ref={history} role="log" aria-label="Conversation history" aria-live="polite" aria-relevant="additions" onScroll={()=>{const node=history.current;if(node)followBottom.current=node.scrollHeight-node.scrollTop-node.clientHeight<64;}}>
    {messages.map(message=><article key={message.id} className={`chat-message ${message.role} ${message.kind??''}`}><span className="chat-author">{message.role==='user'?'You':'Morph'}</span><p>{message.content}</p></article>)}
-   {busy&&<div className="chat-working" role="status"><LoaderCircle size={15} className="spin"/> {response ? "Updating your workspace…" : "Working on your request…"}<button onClick={onCancel}>Cancel</button></div>}
+   {busy&&<div className="chat-working" role="status"><LoaderCircle size={15} className="spin"/> {progressLabel??(response ? "Updating your workspace…" : "Working on your request…")}<button onClick={onCancel}>Cancel</button></div>}
   </div>
   <div className="chat-composer">
    {error&&<p className="chat-preserved">{response ? "Your last successful workspace is still visible. " : "Your original request is retained. "}{needsClarification?'Reply below to clarify.':<button onClick={onRetry}>Retry last request</button>}</p>}

@@ -1,4 +1,8 @@
 "use client";
+import {interactionId} from '@/lib/workspaces/interaction-id';
+
+import {createAgentInput,consumeWorkspaceStream} from '@/lib/workspaces/ag-ui-client';
+import {stageLabels} from '@/lib/workspaces/ag-ui';
 
 import {
   AnimatePresence,
@@ -119,6 +123,8 @@ export default function Home() {return <SessionGate><WorkspaceApp /></SessionGat
 function WorkspaceApp() {
   const [section, setSection] = useState<SectionId>("workspaces");
   const [phase, setPhase] = useState<GenerationPhase>("ready");
+  const [progressStage,setProgressStage]=useState("connecting");
+  const threadId=useRef(interactionId());
   const [prompt, setPrompt] = useState(
     "",
   );
@@ -253,12 +259,12 @@ function WorkspaceApp() {
     setWorkspaceLoading(true);
     if(!context)setWorkspaceData(null);
     setConversation(messages=>startConversation(messages,requestPrompt,!!context||!!clarification));
-    setPhase("understanding");
+    setPhase("understanding");setProgressStage("connecting");
     requestController.current?.abort();
     const sequence=++requestSequence.current;
     const controller=new AbortController();requestController.current=controller;
     try {
-      const response = await requestDynamicWorkspace(requestPrompt,controller.signal,context,clarification);
+      const response = await requestDynamicWorkspace(requestPrompt,controller.signal,context,clarification,threadId.current,stage=>{if(sequence===requestSequence.current)setProgressStage(stage);});
       if(sequence!==requestSequence.current)return;
       setWorkspaceData(response);setChatOpen(true);setRetryClarification(undefined);
       if(showGuide&&demoStepMatches(demoStep,response)){setDemoStep(advanceDemoStep(demoStep,response));setDemoError(null);}
@@ -314,7 +320,7 @@ function WorkspaceApp() {
     }
 
     const item: SavedWorkspace = {
-      id: crypto.randomUUID(),
+      id: interactionId(),
       title: workspaceSpec.title,
       definition:contextFromResponse(workspaceData),
       prompt,
@@ -417,13 +423,13 @@ function WorkspaceApp() {
     requestController.current?.abort();
     const sequence=++requestSequence.current;
     const controller=new AbortController();requestController.current=controller;
-    setPhase('understanding');setWorkspaceError(null);setNeedsClarification(false);
+    setPhase('understanding');setProgressStage('connecting');setWorkspaceError(null);setNeedsClarification(false);
     setChatOpen(false);setRetryClarification(undefined);
     setConversation(startConversation([],item.prompt,false));
     setPrompt(item.prompt);setRetryContext(item.definition);setRetryPrompt(item.definition ? "Refresh this workspace without changing its query or display." : item.prompt);
     setWorkspaceData(null);
     setWorkspaceLoading(true);
-    void requestDynamicWorkspace(item.definition ? 'Refresh this workspace without changing its query or display.' : item.prompt,controller.signal,item.definition).then(data=>{if(sequence===requestSequence.current){setWorkspaceData(data);setChatOpen(true);setResultPrompt(item.prompt);setWorkspaceError(null);setConversation(messages=>appendAssistantMessage(messages,`${data.interpretation} Reopened with freshly authorized data.`));}}).catch(error=>{if(sequence===requestSequence.current){setWorkspaceError(error instanceof Error?error.message:'Could not reopen workspace.');setConversation(messages=>appendAssistantMessage(messages,error instanceof Error?error.message:'Could not reopen workspace.',"error"));setNeedsClarification(error instanceof WorkspaceRequestError && error.needsClarification);if(error instanceof WorkspaceRequestError && error.needsClarification)setChatOpen(true);}}).finally(()=>{if(sequence===requestSequence.current){setWorkspaceLoading(false);setPhase("ready");}});
+    void requestDynamicWorkspace(item.definition ? 'Refresh this workspace without changing its query or display.' : item.prompt,controller.signal,item.definition,undefined,threadId.current,stage=>{if(sequence===requestSequence.current)setProgressStage(stage);}).then(data=>{if(sequence===requestSequence.current){setWorkspaceData(data);setChatOpen(true);setResultPrompt(item.prompt);setWorkspaceError(null);setConversation(messages=>appendAssistantMessage(messages,`${data.interpretation} Reopened with freshly authorized data.`));}}).catch(error=>{if(sequence===requestSequence.current){setWorkspaceError(error instanceof Error?error.message:'Could not reopen workspace.');setConversation(messages=>appendAssistantMessage(messages,error instanceof Error?error.message:'Could not reopen workspace.',"error"));setNeedsClarification(error instanceof WorkspaceRequestError && error.needsClarification);if(error instanceof WorkspaceRequestError && error.needsClarification)setChatOpen(true);}}).finally(()=>{if(sequence===requestSequence.current){setWorkspaceLoading(false);setPhase("ready");}});
     setSaved(true);
     chooseSection("workspaces");
     setToast(`Fetching fresh data for ${item.title}`);
@@ -587,7 +593,7 @@ function WorkspaceApp() {
             exit={reduceMotion ? undefined : { opacity: 0, y: -6 }}
             transition={{ duration: 0.24 }}
           >
-            {section === 'workspaces' && showGuide && <DemoGuide step={demoStep} busy={workspaceLoading} onRun={()=>{void runDemoStep();}} onRestart={startDemo} onFinish={finishDemo} onCancel={cancelWorkspace} error={workspaceError || demoError} needsClarification={needsClarification} response={workspaceData}/> }
+            {section === 'workspaces' && showGuide && <DemoGuide step={demoStep} busy={workspaceLoading} onRun={()=>{void runDemoStep();}} onRestart={startDemo} onFinish={finishDemo} onCancel={cancelWorkspace} error={workspaceError || demoError} needsClarification={needsClarification} response={workspaceData} progressLabel={stageLabels[progressStage]}/> }
             {section === 'workspaces' && <SavedWorkspaces items={savedWorkspaces} onOpen={openSavedWorkspace} onRefresh={async()=>{const state=await requestAppStateBootstrap();setSavedWorkspaces(state.savedWorkspaces);}} />}
             {section === "workspaces" && (!showGuide || !!workspaceData || chatOpen) && (
               <WorkspaceView
@@ -598,6 +604,7 @@ function WorkspaceApp() {
                 setPrompt={value=>updatePrompt(value,true)}
                 onNewPrompt={updatePrompt}
                 phase={phase}
+                progressStage={progressStage}
                 generateWorkspace={()=>{void generateWorkspace(workspaceData ? "Refresh this workspace without changing its query or display." : retryPrompt,workspaceData ? contextFromResponse(workspaceData) : retryContext,workspaceData ? resultPrompt : prompt,workspaceData ? undefined : retryClarification);}}
                 onFollowup={(value,reply=true)=>{if(workspaceData||chatOpen)void generateWorkspace(value,workspaceData?contextFromResponse(workspaceData):retryContext,undefined,reply ? clarificationForReply(retryClarification,retryPrompt,needsClarification?workspaceError:null) : undefined);}}
                 cancelWorkspace={cancelWorkspace}
@@ -695,6 +702,7 @@ function WorkspaceView({
   setPrompt,
   onNewPrompt,
   phase,
+  progressStage,
   generateWorkspace,
   onFollowup,
   cancelWorkspace,
@@ -719,6 +727,7 @@ function WorkspaceView({
   setPrompt: (value: string) => void;
   onNewPrompt: (value: string) => void;
   phase: GenerationPhase;
+  progressStage: string;
   generateWorkspace: () => void;
   onFollowup: (value:string,reply?:boolean)=>void;
   cancelWorkspace: () => void;
@@ -913,7 +922,7 @@ function WorkspaceView({
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0, scale: 0.99 }}
                 >
-                  <GenerationProgress />
+                  <GenerationProgress stage={progressStage} />
                 </motion.div>
               ) : (
                 <motion.div
@@ -939,7 +948,7 @@ function WorkspaceView({
           </div>
         </section>}
 
-        {chatOpen && <WorkspaceConversation response={workspaceData} messages={conversation} onFollowup={onFollowup} busy={isGenerating} onCancel={cancelWorkspace} onRetry={onRetry} error={workspaceError} needsClarification={needsClarification}/>}
+        {chatOpen && <WorkspaceConversation response={workspaceData} messages={conversation} onFollowup={onFollowup} busy={isGenerating} onCancel={cancelWorkspace} onRetry={onRetry} error={workspaceError} needsClarification={needsClarification} progressLabel={stageLabels[progressStage]??"Working on your request"}/>}
       </div>}
       {workspaceData && detailsOpen && <Modal title="Workspace details" subtitle="Interpretation, data access and approved query" onClose={()=>setDetailsOpen(false)} variant="panel"><RequestInterpretation response={workspaceData}/><aside className="inspector-panel">
           <div className="inspector-tabs">
@@ -1369,27 +1378,12 @@ function renderTableCell(
 }
 
 async function requestDynamicWorkspace(
-  prompt: string,
-  signal?:AbortSignal,
-  context?:WorkspaceContext,
-  clarification?:WorkspaceClarification,
-): Promise<DynamicWorkspaceResponse> {
-  const response = await authenticatedFetch("/api/workspaces/generate", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt, limit: 200, ...(context ? {context} : {}), ...(clarification ? {clarification} : {}) }),
-    signal,
-  });
-  const payload = (await response.json()) as
-    | DynamicWorkspaceResponse
-    | { error?: string; code?: string; suggestions?: string[] };
-
-  if (!response.ok) {
-    const errorPayload = payload as { error?: string; code?: string };
-    throw new WorkspaceRequestError(errorPayload.error ?? "The workspace could not be generated.",errorPayload.code ?? "workspace_error");
-  }
-
-  return payload as DynamicWorkspaceResponse;
+  prompt:string,signal?:AbortSignal,context?:WorkspaceContext,clarification?:WorkspaceClarification,
+  threadId?:string,onStage?:(stage:string)=>void,
+):Promise<DynamicWorkspaceResponse>{
+ const input=await createAgentInput(prompt,context,clarification,threadId);
+ const response=await authenticatedFetch("/api/workspaces/agent",{method:"POST",headers:{"Content-Type":"application/json",Accept:"text/event-stream"},body:JSON.stringify(input),signal});
+ return consumeWorkspaceStream(response,input,onStage,signal);
 }
 
 async function requestAppStateBootstrap(): Promise<AppStateBootstrap> {
@@ -1766,7 +1760,7 @@ function ConnectorOnboardingWizard({
     try {
       await onComplete(
         {
-          id: crypto.randomUUID(),
+          id: interactionId(),
           name: draft.name.trim(),
           engine: "PostgreSQL",
           host: draft.host.trim(),
@@ -2045,7 +2039,7 @@ function RulesView({
               event.preventDefault();
               const form = new FormData(event.currentTarget);
               const nextRule: AccessRule = {
-                id: editingRule?.id ?? crypto.randomUUID(),
+                id: editingRule?.id ?? interactionId(),
                 name: String(form.get("name") ?? "").trim(),
                 scope: String(form.get("scope") ?? "").trim(),
                 fields: `${String(form.get("fields") ?? "8")} fields`,
