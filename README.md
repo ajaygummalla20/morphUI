@@ -259,3 +259,5 @@ Run `npm run planner:verify-ag-ui` with `MORPH_BENCHMARK_URL` set to the hosted 
 ### Diagnosing planner failures
 
 Planner and server-reported stream failures show a generated `Reference` UUID in the interface. Match that ID to `morph_planner_error` / `morph_agent_error` logs; individual provider attempts carry the same planner request ID. Terminal failures use error-level logs even when the AG-UI transport returns HTTP200. Logs contain safe failure codes and timing, never prompts, result rows, credentials, or provider response bodies. A successful health check or benchmark does not prove an intermittent user failure is resolved; retain the failing request and reference when investigating.
+
+Release packaging must replace the hosting checkout's `dist/` with the complete verified build output before running the Sites source helper. Copying files over an older build leaves obsolete hashed assets in the archive. If a version has already been saved, use a new source checkpoint for a corrected archive; saving the same commit reuses its existing version.
