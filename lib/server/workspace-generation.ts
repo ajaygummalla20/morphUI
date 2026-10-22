@@ -45,7 +45,7 @@ export async function generateWorkspaceResponse(request: Request, onStage: (stag
       input.prompt,
       discovery.catalog,
       input.limit,
-      { clarification:input.clarification, context: input.context, abortSignal: request.signal, allowFallback: demoMode() && process.env.MORPH_ALLOW_RULE_BASED_PLANNER === "true" },
+      { requestId,clarification:input.clarification, context: input.context, abortSignal: request.signal, allowFallback: demoMode() && process.env.MORPH_ALLOW_RULE_BASED_PLANNER === "true" },
     );
     const plan = plannerResult.plan;
     request.signal.throwIfAborted();
@@ -104,7 +104,8 @@ export async function generateWorkspaceResponse(request: Request, onStage: (stag
     logOperation('generate',requestId,error instanceof SecurityError?error.code:error instanceof WorkspacePlannerUnavailableError?`ai_planner_${error.failureCode}`:'failed',startedAt);
     const denied=securityResponse(error); if (denied) return denied;
     if (error instanceof WorkspacePlannerUnavailableError) {
-      return Response.json({ error: error.message, code: `ai_planner_${error.failureCode}` }, { status: 503, headers: { "Cache-Control": "no-store" } });
+      console.error(JSON.stringify({type:"morph_planner_error",requestId,entryPoint:new URL(request.url).pathname,code:`ai_planner_${error.failureCode}`,durationMs:Math.round(performance.now()-startedAt)}));
+      return Response.json({ error: error.message, code: `ai_planner_${error.failureCode}`,requestId }, { status: 503, headers: { "Cache-Control": "no-store","X-Morph-Request-Id":requestId } });
     }
     if (error instanceof GatewayIdentityRequiredError) {
       return Response.json(

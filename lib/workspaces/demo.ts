@@ -1,3 +1,4 @@
+// Developer regression fixtures only; these never choose or override a user workspace.
 import type {DynamicWorkspaceResponse} from './dynamic';
 // Example requests only. The tour uses the normal AI and Gateway pipeline.
 export const demoSteps=[

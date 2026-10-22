@@ -14,7 +14,7 @@ export async function createAgentInput(prompt:string,context?:WorkspaceContext,c
 }
 const invalid=()=>new WorkspaceRequestError('The workspace stream was invalid. Your previous view has been kept. Please retry.','invalid_agent_stream');
 export async function consumeWorkspaceStream(response:Response,input:Pick<RunAgentInput,'threadId'|'runId'>,onStage:(stage:string)=>void=()=>{},signal?:AbortSignal):Promise<DynamicWorkspaceResponse>{
- if(!response.ok){const payload=await response.json() as {error?:string;code?:string};throw new WorkspaceRequestError(payload.error??'The request could not start.',payload.code??'workspace_error');}
+ if(!response.ok){const payload=await response.json() as {error?:string;code?:string};throw new WorkspaceRequestError(payload.error??'The request could not start.',payload.code??'workspace_error',response.headers.get('X-Morph-Request-Id')??undefined);}
  if(!response.headers.get('Content-Type')?.includes('text/event-stream')||!response.body)throw invalid();
  const reader=response.body.getReader(),decoder=new TextDecoder();
  let buffer='',bytes=0,started=false,terminal=false,result:DynamicWorkspaceResponse|undefined,failure:WorkspaceRequestError|undefined;
@@ -25,7 +25,7 @@ export async function consumeWorkspaceStream(response:Response,input:Pick<RunAge
   if(!started&&item.type!=='RUN_STARTED'&&item.type!=='RUN_ERROR')throw invalid();
   if(item.type==='RUN_STARTED'){if(started||item.threadId!==input.threadId||item.runId!==input.runId)throw invalid();started=true;}
   if(item.type==='STEP_STARTED')onStage(item.stepName);
-  if(item.type==='RUN_ERROR'){terminal=true;failure=new WorkspaceRequestError(item.message,item.code??'workspace_error');}
+  if(item.type==='RUN_ERROR'){terminal=true;failure=new WorkspaceRequestError(item.message,item.code??'workspace_error',typeof item.metadata?.requestId==='string'?item.metadata.requestId:undefined);}
   if(item.type==='RUN_FINISHED'){
    if(item.threadId!==input.threadId||item.runId!==input.runId)throw invalid();terminal=true;
    if(item.outcome?.type==='interrupt')failure=new WorkspaceRequestError(item.outcome.interrupts[0]?.message??'Please clarify your request.','unsupported_workspace_request');

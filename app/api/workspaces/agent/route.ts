@@ -9,6 +9,7 @@ import {parseAgentRequest,clarificationId} from '@/lib/workspaces/ag-ui';
 import {generateWorkspaceResponse} from '@/lib/server/workspace-generation';
 export const dynamic='force-dynamic';
 export async function POST(request:Request){
+ const requestId=crypto.randomUUID();
  let session,parsed;
  try{
   request.signal.throwIfAborted();
@@ -40,7 +41,7 @@ export async function POST(request:Request){
      text(payload.interpretation);
      emit({type:EventType.RUN_FINISHED,threadId:run.threadId,runId:run.runId,outcome:{type:'success'},result:payload});
     }else {
-     const payload=z.object({error:z.string(),code:z.string()}).parse(rawPayload);
+     const payload=z.object({error:z.string(),code:z.string(),requestId:z.string().uuid().optional()}).parse(rawPayload);
      if(payload.code==='unsupported_workspace_request'){
      const clarification={request:state.clarification?.request??input.prompt,question:payload.error,...(state.clarification?{answers:[...(state.clarification.answers??[]),input.prompt].slice(-6)}:{})};
      const id=await clarificationId(run.threadId,clarification.request,clarification.question);
@@ -48,10 +49,17 @@ export async function POST(request:Request){
      text(payload.error);
      emit({type:EventType.MESSAGES_SNAPSHOT,messages:[...run.messages,{id:crypto.randomUUID(),role:'assistant',content:payload.error}]});
      emit({type:EventType.RUN_FINISHED,threadId:run.threadId,runId:run.runId,outcome:{type:'interrupt',interrupts:[{id,reason:'input_required',message:payload.error,responseSchema:{type:'string',minLength:1,maxLength:500}}]}});
-    }else emit({type:EventType.RUN_ERROR,message:payload.error??'The workspace could not be generated.',code:payload.code??'workspace_error'});
+    }else {
+      const reference=payload.requestId??requestId;
+      console.error(JSON.stringify({type:'morph_agent_error',requestId:reference,entryPoint:'/api/workspaces/agent',code:/^[a-z0-9_]{1,64}$/.test(payload.code)?payload.code:'workspace_error'}));
+      emit({type:EventType.RUN_ERROR,message:payload.error,code:payload.code,metadata:{requestId:reference}});
+     }
     }
    }catch{
-    if(!abort.signal.aborted)emit({type:EventType.RUN_ERROR,message:'The workspace stream was interrupted. Please retry.',code:'stream_error'});
+    if(!abort.signal.aborted){
+     console.error(JSON.stringify({type:'morph_agent_error',requestId,entryPoint:'/api/workspaces/agent',code:'stream_error'}));
+     emit({type:EventType.RUN_ERROR,message:'The workspace stream was interrupted. Please retry.',code:'stream_error',metadata:{requestId}});
+    }
    }finally{closed=true;request.signal.removeEventListener('abort',abortRequest);try{controller.close();}catch{/* Reader cancelled. */}}
   },
   cancel(){abort.abort();},

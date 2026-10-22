@@ -1479,10 +1479,6 @@ button:focus-visible,a:focus-visible,input:focus-visible,summary:focus-visible {
 .request-interpretation dt { color: #66715a; font-size: 12px; }
 .request-interpretation dd { margin: 6px 0; font-size: 13px; overflow-wrap: anywhere; }
 .chart-drilldown, .catalog-donut-legend button { border: 0; background: transparent; color: #42671f; cursor: pointer; text-align: left; font-size: 12px; text-decoration: underline; }
-.app-shell.presentation-mode { display: block; padding: 8px; }
-.presentation-mode > .sidebar, .presentation-mode .menu-button, .presentation-mode .inspector-panel, .presentation-mode .saved-workspaces { display: none; }
-.presentation-mode .workspace-grid { grid-template-columns: minmax(0,1fr); }
-.presentation-mode .page-content { max-width: 1440px; margin: 0 auto; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
 @media (max-width: 768px) {
  .demo-guide-heading, .demo-scene, .workspace-conversation form { flex-direction: column; }
@@ -1554,7 +1550,6 @@ button:focus-visible,a:focus-visible,input:focus-visible,summary:focus-visible {
 .chat-data-note { font-size: 10px; line-height: 1.5; color: var(--muted); text-align: center; margin: 10px 0 0; }
 .chat-preserved { font-size: 12px; line-height: 1.6; color: #805820; margin: 0 0 10px; }
 .modal-card .inspector-panel { display: block; width: 100%; border: 0; box-shadow: none; }
-.presentation-mode .workspace-chat { display: flex; }
 @media (max-width: 1180px) {
  .workspace-built .workspace-grid { grid-template-columns: minmax(0,1fr); }
  .workspace-chat { position: static; height: 600px; max-width: none; }
@@ -1590,38 +1585,3 @@ button:focus-visible,a:focus-visible,input:focus-visible,summary:focus-visible {
 @media(max-width:620px){.workspace-chat-only {padding:24px 12px;}.workspace-chat-only .workspace-intro h2{font-size:25px;}}
 
 /* A single, guided story replaces the old persona tabs and presentation toggle. */
-.product-tour { max-width: 1280px; margin: 24px auto; padding: 28px; border: 1px solid var(--line); border-radius: 18px; background: #fff; box-shadow: 0 8px 32px rgba(17,20,15,.04); }
-.tour-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; }
-.tour-heading h2 { max-width: 760px; font-size: clamp(24px,2.5vw,34px); line-height: 1.2; letter-spacing: -.035em; margin: 6px 0 12px; }
-.tour-heading p { max-width: 760px; font-size: 15px; line-height: 1.7; margin: 0; color: #5f6858; }
-.tour-source { border: 1px solid #d9e3cc; color: #4d6731; background: #f4f8ed; border-radius: 20px; padding: 8px 12px; font-size: 12px; flex-shrink: 0; }
-.tour-progress { display: flex; gap: 24px; padding: 22px 0; margin: 20px 0 0; list-style: none; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
-.tour-progress li { display: flex; align-items: center; gap: 9px; font-size: 13px; color: #727b69; }
-.tour-progress li > span { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; border: 1px solid #d9dfd2; background: #f6f8f2; }
-.tour-progress .current { color: #20291a; }
-.tour-progress .current > span { background: var(--ink); border-color: var(--ink); color: var(--lime); }
-.tour-progress .complete > span { background: #eaf5d9; border-color: #c8dfa9; color: #476b25; }
-.tour-step, .tour-finish { display: grid; grid-template-columns: minmax(0,1fr) minmax(250px,300px); gap: 36px; align-items: center; padding-top: 24px; }
-.tour-step-count { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #6b775e; }
-.tour-step h3, .tour-finish h3 { font-size: 21px; margin: 8px 0 10px; letter-spacing: -.02em; }
-.tour-step p, .tour-finish p { font-size: 14px; line-height: 1.7; color: #626b5a; margin: 0 0 14px; }
-.tour-instruction blockquote { font-size: 16px; line-height: 1.6; margin: 16px 0; padding: 16px 18px; border-left: 3px solid #8aaf50; background: #f6f9f0; border-radius: 0 10px 10px 0; }
-.tour-instruction .tour-takeaway { margin: 0; font-size: 13px; }
-.tour-takeaway strong { display: block; color: #4d6434; margin-bottom: 4px; }
-.tour-actions { display: flex; flex-direction: column; align-items: stretch; gap: 14px; }
-.tour-actions .primary-button { min-height: 48px; height: auto; padding: 12px 16px; font-size: 13px; line-height: 1.5; white-space: normal; text-align: center; justify-content: center; }
-.tour-actions .primary-button:disabled { opacity: .6; cursor: wait; }
-.tour-actions .text-button { justify-content: center; font-size: 12px; cursor: pointer; }
-.tour-actions small { font-size: 11px; color: #77806d; line-height: 1.6; text-align: center; }
-.tour-error { font-size: 13px; line-height: 1.7; padding: 14px 16px; margin: 20px 0 0; border-radius: 10px; background: #fff6e9; border: 1px solid #edd8bb; color: #805d2f; }
-@media(max-width:900px){.product-tour{margin:16px;padding:22px;}.tour-step,.tour-finish{grid-template-columns:1fr;gap:22px;}.tour-actions{align-items:flex-start;}.tour-actions small{text-align:left;}}
-@media(max-width:620px){.product-tour{margin:12px;padding:18px;}.tour-heading{flex-direction:column;gap:12px;}.tour-heading p{font-size:14px;}.tour-progress{gap:16px;justify-content:space-between;}.tour-progress li{font-size:12px;gap:6px;}.tour-step h3{font-size:19px;}.tour-actions{align-items:stretch;}.tour-heading h2{font-size:26px;}}
-.presentation-mode .persistence-pill, .presentation-mode .safe-pill, .presentation-mode .topbar-actions > .icon-button, .presentation-mode .top-avatar, .presentation-mode .workspace-heading-actions { display: none; }
-.tour-running { padding: 20px 24px; }
-.tour-running .tour-heading .intro-kicker, .tour-running .tour-heading p { display: none; }
-.tour-running .tour-heading h2 { font-size: 21px; margin: 0; }
-.tour-running .tour-progress { margin-top: 14px; padding: 12px 0; }
-.tour-running .tour-step { padding-top: 16px; gap: 28px; }
-.tour-running .tour-step h3 { font-size: 18px; }
-.tour-running .tour-instruction blockquote { margin: 10px 0 0; padding: 12px 16px; font-size: 14px; }
-.tour-running .tour-instruction .tour-takeaway { display: none; }

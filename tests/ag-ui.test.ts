@@ -52,3 +52,12 @@ test('conversation identifiers work in the HTTP-only preview without randomUUID'
  const descriptor=Object.getOwnPropertyDescriptor(crypto,'randomUUID');Object.defineProperty(crypto,'randomUUID',{value:undefined,configurable:true});
  try{assert.match(interactionId(),/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/);}finally{if(descriptor)Object.defineProperty(crypto,'randomUUID',descriptor);else delete (crypto as unknown as {randomUUID?:unknown}).randomUUID;}
 });
+test('planner failures preserve a safe reference that matches server diagnostics',async t=>{
+ const names=['MORPH_ALLOW_RULE_BASED_PLANNER','MORPH_AI_PLANNER_ENABLED','OPENAI_API_KEY','GOOGLE_GENERATIVE_AI_API_KEY'];const previous=names.map(name=>process.env[name]);
+ for(const name of names)delete process.env[name];t.after(()=>names.forEach((name,index)=>{if(previous[index]===undefined)delete process.env[name];else process.env[name]=previous[index];}));
+ const logs:string[]=[];t.mock.method(console,'error',value=>logs.push(String(value)));
+ const input=await createAgentInput('Show all policies');const response=await POST(request(input));
+ await assert.rejects(consumeWorkspaceStream(response,input),error=>{
+  const failure=error as Error&{requestId?:string};assert.match(failure.requestId??'',/^[a-f0-9-]{36}$/);assert.ok(logs.some(line=>JSON.parse(line).requestId===failure.requestId));return true;
+ });
+});

@@ -36,6 +36,6 @@ export function SessionGate({children}:{children:ReactNode}) {
       clearLegacyCache();setStatus('signed_out');setMessage('You are signed out of MorphUI.');
     } catch {setMessage('Sign-out failed. Please retry.');}
   };
-  if(status==='ready') return <><div className="session-bar"><span>{demo?'Demonstration · synthetic data':'Organization session'}</span>{message&&<span role="alert">{message}</span>}<button onClick={()=>void logout()}>Sign out</button></div>{children}</>;
+  if(status==='ready') return <><div className="session-bar"><span>{demo?'Sample insurance data · read only':'Organization session'}</span>{message&&<span role="alert">{message}</span>}<button onClick={()=>void logout()}>Sign out</button></div>{children}</>;
   return <main className="auth-page"><section className="auth-card"><span className="page-kicker">MorphUI</span><h1>Your data. Your workspace.</h1><p role="status">{status==='loading'?'Checking your session…':message}</p>{status==='signed_out'&&<a className="primary-button" href="/api/auth/login">Sign in with your organization</a>}{status==='error'&&<button className="primary-button" onClick={()=>window.location.reload()}>Retry connection</button>}</section></main>;
 }

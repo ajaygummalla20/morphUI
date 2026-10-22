@@ -228,25 +228,21 @@ establish live AI availability or a live customer database connection.
 
 By default it uses the server's configured AI credentials and tests planning/rendering only. To test a deployed API, set `MORPH_BENCHMARK_URL` to the generation endpoint and, for a private Sites deployment, pass its service credential through the `MORPH_BENCHMARK_TOKEN` environment variable. Never put credentials in command arguments, source files or reports. The deployed mode includes authorization, Gateway execution and rendering. Customer results are never included in its output.
 
-Opening the app does not invoke the AI automatically. Generation shows an elapsed-time indicator rather than simulated completed stages. Cancel stops the UI wait, suppresses stale responses and propagates cancellation to the pending planner where the hosting transport supports disconnect signals. A Gateway query already executing may still finish. Clarification messages retain the model's question; users edit their request instead of blindly retrying it.
+Opening the app does not invoke the AI automatically. Generation shows an elapsed-time indicator rather than simulated completed stages. Cancel stops the UI wait, suppresses stale responses and propagates cancellation to the pending planner where the hosting transport supports disconnect signals. A Gateway query already executing may still finish. Clarification messages retain the model's question; users answer in chat to continue the original request.
 
 Existing PostgreSQL analytics tests verify arithmetic against fixtures: full-population totals before limits, percentage changes, missing buckets, undefined baselines, averages and category alignment. Passing the planner benchmark alone does not prove those calculations or guarantee provider availability.
 
-### Guided demo and workspace follow-ups
+### Workspace interaction
 
-Select **Start demo** for a focused three-step walkthrough: request a premium table, reshape it through chat, and narrow it with a filter. **Exit demo** restores normal navigation. The source badge distinguishes sample data from connected data; the tour does not change identity or permissions.
-
-After generating a workspace, **Refine this workspace** accepts changes such as “Show the same result in a normal table only.” The planner receives only the previous query definition and presentation preferences, never returned rows. Existing filters must be preserved unless the model explicitly identifies an intentional filter change. Every revised plan is validated against the current catalogue and independently authorized by the Gateway. Follow-ups never use rule-based compatibility fallback. Changing datasets requires starting a new workspace.
-
-Category chart controls open a fresh, authorized records query for that group. Record drawers display only the fields already returned by the Gateway. Saved workspaces store a bounded query/display definition without result rows; reopening refreshes data under current permissions. Duplicate creates an independent definition with its own ID. The D1 migration removes uniqueness by prompt so copies do not overwrite the original; updates remain scoped to organization and owner.
+The normal Workspaces page is the presentation experience: enter a request, build a real workspace, and refine it in the side chat. Example prompts populate the same composer and use the same planner and Gateway when submitted. There is no separate guided demo or presentation mode. A small sample-data label identifies the synthetic insurance source.
 
 ### Workspace and chat experience
 
 The Workspaces page starts with a focused request composer. If Morph needs clarification, the chat opens immediately, even before a workspace exists, and replies continue the original request. After successful generation, the main canvas displays the workspace beside that same conversation (below the canvas on smaller screens). Follow-ups keep the last successful response visible during planning, clarification, errors and cancellation. The panel records a bounded, session-local transcript; it is not sent as result data to the model or saved as query results. Clarification answers include only the unresolved request and question so the planner can resolve a short answer correctly. Data-access information, request interpretation and the approved query remain available through **Details**. **New workspace** clears the current conversation and query context.
 
-### Three-step product demo
+### Regression examples
 
-**Start demo** opens a focused, linear walkthrough: build a premium-by-manager table, change it to a donut through chat, then filter policies above ₹30,000. Each button executes the same AI/Gateway path as a normal request. Progress advances only when the returned query and display match the step; errors and cancellation never mark it complete. A source badge distinguishes sample and connected data. **Exit demo** restores the normal interface, and **Continue with my own questions** keeps the final workspace available for exploration. The tour replaces the former persona tabs and separate presentation toggle.
+The three premium table → donut → filtered-donut requests remain developer regression fixtures, not a separate product mode. `npm run planner:verify-ag-ui` verifies those requests through the live AG-UI endpoint. The normal interface accepts users’ own requests and follow-ups.
 
 ### AG-UI workspace interaction
 
@@ -258,4 +254,8 @@ Clarification ends with an `input_required` interrupt and opens chat. Replies re
 
 This endpoint intentionally supports one user text message per request, no frontend tools, and only approved workspace definitions/clarification state. Result rows and Gateway credentials never enter shared planner state. Masked, authorized results travel to the browser in the final result and are not automatically persisted as an AG-UI history. Arbitrary UI code and raw SQL remain prohibited.
 
-Run `npm run planner:verify-ag-ui` with `MORPH_BENCHMARK_URL` set to the hosted generation or agent endpoint to verify the three-step real-model demo over AG-UI. Provider availability and browser visual QA are separate checks.
+Run `npm run planner:verify-ag-ui` with `MORPH_BENCHMARK_URL` set to the hosted generation or agent endpoint to verify the three real-model regression requests over AG-UI. Provider availability and browser visual QA are separate checks.
+
+### Diagnosing planner failures
+
+Planner and server-reported stream failures show a generated `Reference` UUID in the interface. Match that ID to `morph_planner_error` / `morph_agent_error` logs; individual provider attempts carry the same planner request ID. Terminal failures use error-level logs even when the AG-UI transport returns HTTP200. Logs contain safe failure codes and timing, never prompts, result rows, credentials, or provider response bodies. A successful health check or benchmark does not prove an intermittent user failure is resolved; retain the failing request and reference when investigating.
