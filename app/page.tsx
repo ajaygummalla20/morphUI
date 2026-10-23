@@ -1,7 +1,7 @@
 "use client";
 import {interactionId} from '@/lib/workspaces/interaction-id';
 
-import {createAgentInput,consumeWorkspaceStream} from '@/lib/workspaces/ag-ui-client';
+import {createAgentInput,createReviewedAgentInput,consumeWorkspaceAgent,consumeWorkspaceStream} from '@/lib/workspaces/ag-ui-client';
 import {stageLabels} from '@/lib/workspaces/ag-ui';
 
 import {
@@ -51,7 +51,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 import type {
   DynamicWorkspaceResponse,
   TableCellFormat,
@@ -72,12 +72,15 @@ import { SessionGate, authenticatedFetch } from './components/session-gate';
 import { SavedWorkspaces } from './components/saved-workspaces';
 import { GenerationProgress } from './components/generation-progress';
 import {WorkspaceConversation,RequestInterpretation} from './components/workspace-conversation';
-import {contextFromResponse,type WorkspaceContext,type WorkspaceClarification} from '@/lib/workspaces/context';
+import {contextFromResponse,type WorkspaceContext,type WorkspaceClarification,type WorkspaceReviewedDefinition} from '@/lib/workspaces/context';
+import type {WorkspacePlanReview} from '@/lib/workspaces/plan-review';
+import {initialReviewSession,reviewSessionReducer} from '@/lib/workspaces/plan-review-session';
 import {startConversation,appendAssistantMessage,clarificationForReply,type ConversationMessage} from "@/lib/workspaces/conversation";
 import { WorkspaceRequestError } from '@/lib/workspaces/client-error';
 
 type SectionId = "workspaces" | "sources" | "rules" | "audit";
 type GenerationPhase = "ready" | "understanding";
+type GenerationOptions={review?:boolean;approved?:WorkspaceReviewedDefinition};
 type AppOverlay = "search" | "notifications" | "profile" | "organization" | null;
 type PersistenceMode = "connecting" | "cloud" | "device";
 type SavedWorkspace = SavedWorkspaceRecord;
@@ -129,6 +132,9 @@ function WorkspaceApp() {
   const [saved, setSaved] = useState(false);
   const [conversation,setConversation]=useState<ConversationMessage[]>([]);
   const [chatOpen,setChatOpen]=useState(false);
+  const [reviewSession,dispatchReview]=useReducer(reviewSessionReducer,initialReviewSession);
+  const {review:planReview,enabled:reviewBeforeRun}=reviewSession;
+  const retryOptions=useRef<GenerationOptions>({});
   const [inspector, setInspector] = useState<"safety" | "query">("safety");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -242,24 +248,37 @@ function WorkspaceApp() {
     }
   };
 
-  const generateWorkspace = async (followup?: string, context?: WorkspaceContext, displayPrompt?:string, clarification?:WorkspaceClarification) => {
+  const generateWorkspace = async (followup?: string, context?: WorkspaceContext, displayPrompt?:string, clarification?:WorkspaceClarification, options?:GenerationOptions) => {
     if (phase !== "ready") return;
     const requestPrompt=followup ?? prompt;
+    const reviewRequested=options?.review??reviewBeforeRun;
+    retryOptions.current={review:reviewRequested,approved:options?.approved};
+    if(!options?.approved)dispatchReview({type:'start',review:reviewRequested});
     setRetryContext(context);setRetryPrompt(requestPrompt);setRetryClarification(clarification);
     if(followup)setPrompt(displayPrompt??followup);
     setSaved(false);
     setWorkspaceError(null);
     setNeedsClarification(false);
     setWorkspaceLoading(true);
-    if(!context)setWorkspaceData(null);
-    setConversation(messages=>startConversation(messages,requestPrompt,!!context||!!clarification));
+    setConversation(messages=>startConversation(messages,options?.approved?'Run this plan':requestPrompt,!!context||!!clarification||!!options?.approved));
     setPhase("understanding");setProgressStage("connecting");
     requestController.current?.abort();
     const sequence=++requestSequence.current;
     const controller=new AbortController();requestController.current=controller;
     try {
-      const response = await requestDynamicWorkspace(requestPrompt,controller.signal,context,clarification,threadId.current,stage=>{if(sequence===requestSequence.current)setProgressStage(stage);});
+      const input=options?.approved
+        ? await createReviewedAgentInput(requestPrompt,options.approved,threadId.current)
+        : await createAgentInput(requestPrompt,context,clarification,threadId.current,{review:reviewRequested});
+      const stream=await authenticatedFetch('/api/workspaces/agent',{method:'POST',headers:{'Content-Type':'application/json',Accept:'text/event-stream'},body:JSON.stringify(input),signal:controller.signal});
+      const outcome=await consumeWorkspaceAgent(stream,input,stage=>{if(sequence===requestSequence.current)setProgressStage(stage);},controller.signal);
       if(sequence!==requestSequence.current)return;
+      if(outcome.type==='plan_review'){
+        dispatchReview({type:'ready',review:outcome.review});setChatOpen(true);setRetryContext(outcome.review.definition.context);setRetryClarification(undefined);
+        setConversation(messages=>appendAssistantMessage(messages,'Your plan is ready. Check the details below, run it, or ask for a change. No result records have been fetched.'));
+        setPhase('ready');return;
+      }
+      const response=outcome.response;
+      dispatchReview({type:'executed'});
       setWorkspaceData(response);setChatOpen(true);setRetryClarification(undefined);
       setConversation(messages=>appendAssistantMessage(messages,`${response.interpretation} ${context ? "The workspace has been updated." : "Your workspace is ready. Ask me to change the format, filters or grouping."}`));
       setResultPrompt(displayPrompt??requestPrompt);
@@ -281,7 +300,6 @@ function WorkspaceApp() {
       setWorkspaceError(message);
       setNeedsClarification(error instanceof WorkspaceRequestError && error.needsClarification);
       if(error instanceof WorkspaceRequestError && error.needsClarification)setChatOpen(true);
-      if(!context)setWorkspaceData(null);
       setConversation(messages=>appendAssistantMessage(messages,message,error instanceof WorkspaceRequestError&&error.needsClarification?"response":"error"));
       setToast(error instanceof WorkspaceRequestError&&error.needsClarification?"Morph has a question — reply in chat":"Request needs attention — see the message above");
     } finally {
@@ -297,12 +315,12 @@ function WorkspaceApp() {
 
   const updatePrompt = (value: string, preserveContext=false) => {
     requestSequence.current++; requestController.current?.abort();
-    setPrompt(value); setSaved(false); setWorkspaceData(null);setConversation([]);setChatOpen(false);setRetryClarification(undefined); setRetryPrompt(undefined);if(!preserveContext)setRetryContext(undefined);
+    setPrompt(value); setSaved(false); setWorkspaceData(null);setConversation([]);setChatOpen(false);dispatchReview({type:'reset'});retryOptions.current={};setRetryClarification(undefined); setRetryPrompt(undefined);if(!preserveContext)setRetryContext(undefined);
     setPhase("ready"); setWorkspaceLoading(false); setWorkspaceError(null); setNeedsClarification(false);
   };
 
   const saveCurrentWorkspace = async () => {
-    if (!workspaceData || workspaceLoading || phase !== "ready" || resultPrompt!==prompt) return;
+    if (!workspaceData || planReview || workspaceLoading || phase !== "ready" || resultPrompt!==prompt) return;
     const saveSequence=requestSequence.current;
     const existing = savedWorkspaces.find((item) => item.prompt === prompt && JSON.stringify(item.definition) === JSON.stringify(workspaceData ? contextFromResponse(workspaceData) : undefined));
     if (existing) {
@@ -404,13 +422,14 @@ function WorkspaceApp() {
 
   const cancelWorkspace = () => {
     requestSequence.current++; requestController.current?.abort();
-    setPhase("ready"); setSaved(false); setWorkspaceLoading(false); setWorkspaceError(workspaceData?null:retryClarification?.question??null); setNeedsClarification(!workspaceData&&!!retryClarification);
+    dispatchReview({type:'reset'});retryOptions.current={};setPhase("ready"); setSaved(false); setWorkspaceLoading(false); setWorkspaceError(workspaceData?null:retryClarification?.question??null); setNeedsClarification(!workspaceData&&!!retryClarification);
     if(workspaceData){setPrompt(resultPrompt);setRetryContext(contextFromResponse(workspaceData));setRetryPrompt(undefined);setRetryClarification(undefined);}
     setConversation(messages=>appendAssistantMessage(messages,workspaceData ? "Cancelled. Your last successful workspace is unchanged." : "Generation cancelled. You can try again.","cancelled"));
     setToast("Generation cancelled");
   };
 
   const openSavedWorkspace = (item: SavedWorkspace) => {
+    dispatchReview({type:'reset'});retryOptions.current={};
     requestController.current?.abort();
     const sequence=++requestSequence.current;
     const controller=new AbortController();requestController.current=controller;
@@ -573,14 +592,20 @@ function WorkspaceApp() {
               <WorkspaceView
                 chatOpen={chatOpen}
                 conversation={conversation}
-                onRetry={()=>{void generateWorkspace(retryPrompt,retryContext,prompt,retryClarification);}}
+                planReview={planReview}
+                reviewBeforeRun={reviewBeforeRun}
+                onReviewBeforeRunChange={enabled=>dispatchReview({type:'toggle',enabled})}
+                onReviewPlan={()=>{void generateWorkspace(undefined,undefined,undefined,undefined,{review:true});}}
+                onRunReview={()=>{if(planReview)void generateWorkspace(prompt,undefined,prompt,undefined,{approved:planReview.definition});}}
+                onDismissReview={()=>{if(!workspaceData){updatePrompt(prompt);return;}dispatchReview({type:'reset'});retryOptions.current={};setPrompt(resultPrompt);setWorkspaceError(null);setRetryContext(contextFromResponse(workspaceData));setRetryClarification(undefined);setConversation(messages=>appendAssistantMessage(messages,'Plan discarded. Your last successful workspace is unchanged.'));}}
+                onRetry={()=>{void generateWorkspace(retryPrompt,retryOptions.current.approved?undefined:retryContext,prompt,retryOptions.current.approved?undefined:retryClarification,retryOptions.current);}}
                 prompt={prompt}
                 setPrompt={value=>updatePrompt(value,true)}
                 onNewPrompt={updatePrompt}
                 phase={phase}
                 progressStage={progressStage}
-                generateWorkspace={()=>{void generateWorkspace(workspaceData ? "Refresh this workspace without changing its query or display." : retryPrompt,workspaceData ? contextFromResponse(workspaceData) : retryContext,workspaceData ? resultPrompt : prompt,workspaceData ? undefined : retryClarification);}}
-                onFollowup={(value,reply=true)=>{if(workspaceData||chatOpen)void generateWorkspace(value,workspaceData?contextFromResponse(workspaceData):retryContext,undefined,reply ? clarificationForReply(retryClarification,retryPrompt,needsClarification?workspaceError:null) : undefined);}}
+                generateWorkspace={()=>{void generateWorkspace(workspaceData ? "Refresh this workspace without changing its query or display." : retryPrompt,workspaceData ? contextFromResponse(workspaceData) : retryContext,workspaceData ? resultPrompt : prompt,workspaceData ? undefined : retryClarification,{review:workspaceData?reviewBeforeRun:false});}}
+                onFollowup={(value,reply=true)=>{if(workspaceData||chatOpen)void generateWorkspace(value,reviewSession.context??(workspaceData?contextFromResponse(workspaceData):retryContext),undefined,reply ? clarificationForReply(retryClarification,retryPrompt,needsClarification?workspaceError:null) : undefined);}}
                 cancelWorkspace={cancelWorkspace}
                 needsClarification={needsClarification}
                 inspector={inspector}
@@ -671,6 +696,12 @@ function WorkspaceApp() {
 function WorkspaceView({
   chatOpen,
   conversation,
+  planReview,
+  reviewBeforeRun,
+  onReviewBeforeRunChange,
+  onReviewPlan,
+  onRunReview,
+  onDismissReview,
   onRetry,
   prompt,
   setPrompt,
@@ -696,6 +727,12 @@ function WorkspaceView({
 }: {
   chatOpen: boolean;
   conversation: ConversationMessage[];
+  planReview: WorkspacePlanReview|null;
+  reviewBeforeRun: boolean;
+  onReviewBeforeRunChange:(value:boolean)=>void;
+  onReviewPlan:()=>void;
+  onRunReview:()=>void;
+  onDismissReview:()=>void;
   onRetry: ()=>void;
   prompt: string;
   setPrompt: (value: string) => void;
@@ -734,14 +771,14 @@ function WorkspaceView({
       <section className="workspace-intro">
         <div>
           <div className="intro-kicker"><Sparkles size={14} /> {workspaceData ? "Your workspace" : "From a question to a workspace"}</div>
-          <h2>{workspaceData ? workspaceSpec.title : chatOpen ? "Let’s shape your workspace" : "What would you like to work on?"}</h2>
-          <p>{workspaceData ? "Explore your data here. Refine the view in the conversation alongside it." : chatOpen ? "Answer Morph’s question below. Your original request stays in the conversation." : "Describe what you need. Build your view, then shape it in conversation."}</p>
+          <h2>{workspaceData ? workspaceSpec.title : planReview ? 'Check your plan before running it' : chatOpen ? "Let’s shape your workspace" : "What would you like to work on?"}</h2>
+          <p>{workspaceData ? "Explore your data here. Refine the view in the conversation alongside it." : planReview ? 'Check the interpretation, then run it or ask for a change in chat.' : chatOpen ? "Continue your request in the conversation below." : "Describe what you need. Build your view, then shape it in conversation."}</p>
         </div>
         {(workspaceData||chatOpen) && <div className="workspace-heading-actions"><button className="secondary-button" onClick={()=>onNewPrompt("")}>New workspace</button>
         {workspaceData && <button
           className={`secondary-button ${saved ? "saved" : ""}`}
           onClick={onSave}
-          disabled={!workspaceData || isGenerating || !!workspaceError}
+          disabled={!workspaceData || isGenerating || !!workspaceError || !!planReview}
         >
           {saved ? <Check size={15} /> : <Save size={15} />}
           {saved ? "Saved" : "Save workspace"}
@@ -770,14 +807,14 @@ function WorkspaceView({
               </button>
               <span><ShieldCheck size={13} /> Read-only access</span>
             </div>
-            <button
+            <div className="prompt-build-actions"><button className="secondary-button" disabled={isGenerating||prompt.trim().length<8} onClick={onReviewPlan}>Review plan</button><button
               className="generate-button"
               disabled={isGenerating || prompt.trim().length<8}
               onClick={generateWorkspace}
             >
               {isGenerating ? <LoaderCircle className="spin" size={16} /> : <Play size={15} fill="currentColor" />}
               {isGenerating ? "Building" : "Build workspace"}
-            </button>
+            </button></div>
             {isGenerating && <button className="secondary-button" onClick={cancelWorkspace}>Cancel generation</button>}
           </div>
         </div>
@@ -922,7 +959,7 @@ function WorkspaceView({
           </div>
         </section>}
 
-        {chatOpen && <WorkspaceConversation response={workspaceData} messages={conversation} onFollowup={onFollowup} busy={isGenerating} onCancel={cancelWorkspace} onRetry={onRetry} error={workspaceError} needsClarification={needsClarification} progressLabel={stageLabels[progressStage]??"Working on your request"}/>}
+        {chatOpen && <WorkspaceConversation response={workspaceData} messages={conversation} onFollowup={onFollowup} busy={isGenerating} onCancel={cancelWorkspace} onRetry={onRetry} error={workspaceError} needsClarification={needsClarification} review={planReview} onRunReview={onRunReview} onDismissReview={onDismissReview} reviewBeforeRun={reviewBeforeRun} onReviewBeforeRunChange={onReviewBeforeRunChange} progressLabel={stageLabels[progressStage]??"Working on your request"}/>}
       </div>}
       {workspaceData && detailsOpen && <Modal title="Workspace details" subtitle="Interpretation, data access and approved query" onClose={()=>setDetailsOpen(false)} variant="panel"><RequestInterpretation response={workspaceData}/><aside className="inspector-panel">
           <div className="inspector-tabs">
@@ -954,7 +991,7 @@ function WorkspaceView({
                   <SafetyRule
                     icon={Sparkles}
                     label="Workspace planner"
-                    value={workspaceData?.planner?.mode === "ai" ? "AI plan · validated" : "Deterministic fallback"}
+                    value={workspaceData?.planner?.mode === "ai" ? "AI plan · validated" : workspaceData?.planner?.mode==='reviewed_plan'?'Reviewed plan · revalidated':"Deterministic fallback"}
                   />
                   <SafetyRule
                     icon={Fingerprint}

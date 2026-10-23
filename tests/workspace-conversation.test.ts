@@ -44,3 +44,24 @@ test('initial replies and replies after cancellation or provider failure retain 
  assert.equal(next?.request,'Show premium growth');assert.equal(next?.question,'Which period?');assert.deepEqual(next?.answers,['January to March 2026']);
  assert.equal(clarificationForReply(undefined,'Unrelated request',null),undefined);
 });
+
+test('plan review presents the actual measure, filters and format with an explicit run action',async()=>{
+ const {createElement}=await import('react');
+ const {renderToStaticMarkup}=await import('react-dom/server');
+ const {WorkspacePlanReviewCard}=await import('../app/components/workspace-plan-review');
+ const {createPlanReview}=await import('../lib/server/reviewed-plan');
+ const {validateProposal}=await import('../lib/workspaces/ai-planner');
+ const {insuranceSemanticCatalog}=await import('../lib/catalog/semantic');
+ const plan=validateProposal({supported:true,intent:'endorsements',entity:'endorsements',title:'Pending endorsements',interpretation:'Pending endorsement counts by type.',fields:['type'],filters:[{field:'status',operator:'in',value:'requested,documents_pending,under_review'}],groupBy:'type',orderBy:[],metricIds:[],analysis:{metricId:'endorsement_count',time:null,comparison:'none'},visualization:'table',presentation:{blocks:['table'],tableLayout:'grouped_summary'},unsupportedReason:''},insuranceSemanticCatalog);
+ const review=createPlanReview(plan,insuranceSemanticCatalog,'secure_demo');
+ const html=renderToStaticMarkup(createElement(WorkspacePlanReviewCard,{review,busy:false,onRun:()=>{},onEdit:()=>{},onDismiss:()=>{}}));
+ for(const text of ['Review your plan','Endorsements','Summary table','requested,documents_pending,under_review','Run this plan','Ask for a change','Sample insurance data','No result records fetched'])assert.ok(html.includes(text),text);
+ assert.doesNotMatch(html,/All checks passed|Workspace is ready/);
+ const busy=renderToStaticMarkup(createElement(WorkspacePlanReviewCard,{review,busy:true,onRun:()=>{},onEdit:()=>{},onDismiss:()=>{}}));
+ assert.match(busy,/disabled=""/);
+ const {WorkspaceConversation}=await import('../app/components/workspace-conversation');
+ const failedRun=renderToStaticMarkup(createElement(WorkspaceConversation,{response:null,messages:[],onFollowup:()=>{},busy:false,onCancel:()=>{},onRetry:()=>{},error:'Gateway unavailable',needsClarification:false,review,onRunReview:()=>{},onDismissReview:()=>{}}));
+ assert.match(failedRun,/<button class="generate-button"><svg/);
+ assert.match(failedRun,/<button class="secondary-button">Ask for a change/);
+ assert.match(failedRun,/<button class="plan-review-dismiss">Discard/);
+});

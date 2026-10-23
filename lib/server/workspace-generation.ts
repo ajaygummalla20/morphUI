@@ -19,6 +19,7 @@ import { guardRequest, demoMode } from '@/lib/auth/session';
 import { gatewayIdentityFor } from '@/lib/auth/gateway';
 import { activeConnectorFor, ensureAppActor, recordWorkspaceRun } from '@/db/app-state';
 import { SecurityError, securityResponse, readJsonLimited, logOperation } from '@/lib/server/security';
+import {createPlanReview,validateReviewedPlan} from './reviewed-plan';
 
 export async function generateWorkspaceResponse(request: Request, onStage: (stage: string) => void = () => {}, authorized?: Awaited<ReturnType<typeof guardRequest>>, suppliedInput?: unknown) {
   const startedAt = performance.now();
@@ -40,15 +41,27 @@ export async function generateWorkspaceResponse(request: Request, onStage: (stag
       try{validateWorkspaceContext(input.context,discovery.catalog);}
       catch{throw new SecurityError(400,"invalid_workspace_context","The saved workspace no longer matches the approved catalogue. Start a new workspace.");}
     }
+    let plannerResult;
+    if(input.action==='run_reviewed'){
+      try{
+        plannerResult={plan:validateReviewedPlan(input.reviewedPlan!,discovery.catalog),planner:{mode:'reviewed_plan' as const,model:null,validated:true as const,reason:'reviewed_definition' as const}};
+      }catch{throw new SecurityError(400,'invalid_reviewed_plan','This plan no longer matches the available data or permissions. Ask Morph to review it again.');}
+    }else{
     onStage("planning");
-    const plannerResult = await planWorkspaceRequestWithAi(
+    plannerResult = await planWorkspaceRequestWithAi(
       input.prompt,
       discovery.catalog,
       input.limit,
-      { requestId,clarification:input.clarification, context: input.context, abortSignal: request.signal, allowFallback: demoMode() && process.env.MORPH_ALLOW_RULE_BASED_PLANNER === "true" },
+      { requestId,clarification:input.clarification, context: input.context, abortSignal: request.signal, requireAi:input.action==='review',allowFallback: demoMode() && process.env.MORPH_ALLOW_RULE_BASED_PLANNER === "true" },
     );
+    }
     const plan = plannerResult.plan;
     request.signal.throwIfAborted();
+    if(input.action==='review'){
+      const review=createPlanReview(plan,discovery.catalog,discovery.sourceMode);
+      logOperation('generate',requestId,'plan_review',startedAt);
+      return Response.json(review,{headers:{'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});
+    }
     const queryPlan = createWorkspaceQueryPlan(plan);
     const catalogEntity = discovery.catalog.entities.find(
       (entity) => entity.entity === plan.entity,

@@ -12,6 +12,15 @@ export const workspaceContextSchema=z.object({
   chartValue:z.enum(['value','change_amount','change_percent']).default('value'),
 }).strict();
 export type WorkspaceContext=z.infer<typeof workspaceContextSchema>;
+// A review is a query/display definition, never proof of identity or access.
+export const workspaceReviewedDefinitionSchema=z.object({
+  intent:z.enum(['policies','renewals','claims','endorsements']),
+  title:z.string().trim().min(1).max(100),
+  interpretation:z.string().trim().min(1).max(240),
+  context:workspaceContextSchema,
+  metricIds:z.array(z.string().regex(/^[a-z0-9_]+$/)).max(12),
+}).strict();
+export type WorkspaceReviewedDefinition=z.infer<typeof workspaceReviewedDefinitionSchema>;
 export function contextFromResponse(response:DynamicWorkspaceResponse):WorkspaceContext {
   const chart=response.spec.blocks.find(block=>block.type==='chart');
   return workspaceContextSchema.parse({plan:response.queryPlan,presentation:response.presentation,visualization:chart?.type==='chart'?chart.variant:'table',chartValue:chart?.type==='chart'&&chart.valueFormat==='percentage'?'change_percent':response.chartValue??'value'});

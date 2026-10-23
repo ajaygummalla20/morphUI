@@ -16,7 +16,7 @@
     "test:gateway": "bash scripts/sites-env.sh -- node --import tsx --import ./tests/helpers/demo-api.ts --test tests/gateway-policy.test.ts tests/gateway-catalog.test.ts tests/gateway-response.test.ts",
     "test:gateway-service": "npm test --prefix gateway",
     "test:gateway-postgres": "bash scripts/sites-env.sh -- node --import tsx --test tests/gateway-postgres.test.ts tests/gateway-analytics-postgres.test.ts tests/gateway-analysis-validation.test.ts",
-    "test:workspace": "bash scripts/sites-env.sh -- node --import tsx --import ./tests/helpers/demo-api.ts --test tests/dynamic-workspace.test.ts tests/semantic-catalog.test.ts tests/planner-provider.test.ts tests/workspace-export.test.ts tests/request-understanding.test.ts tests/workspace-analysis.test.ts tests/planner-api-failure.test.ts tests/planner-benchmark.test.ts tests/workspace-followup.test.ts tests/workspace-conversation.test.ts tests/demo-tour.test.ts tests/ag-ui.test.ts",
+    "test:workspace": "bash scripts/sites-env.sh -- node --import tsx --import ./tests/helpers/demo-api.ts --test tests/dynamic-workspace.test.ts tests/semantic-catalog.test.ts tests/planner-provider.test.ts tests/workspace-export.test.ts tests/request-understanding.test.ts tests/workspace-analysis.test.ts tests/planner-api-failure.test.ts tests/planner-benchmark.test.ts tests/workspace-followup.test.ts tests/workspace-conversation.test.ts tests/workspace-plan-review.test.ts tests/plan-review-session.test.ts tests/demo-tour.test.ts tests/ag-ui.test.ts",
     "validate:artifact": "bash scripts/validate-artifact.sh",
     "lint": "bash scripts/sites-env.sh -- eslint . --ignore-pattern dist --ignore-pattern .next",
     "typecheck": "tsc --noEmit",
@@ -45,7 +45,8 @@
     "planner:verify-live": "node --import tsx scripts/verify-live-planner.ts",
     "gateway:smoke": "node --import tsx scripts/gateway-postgres-smoke.ts",
     "check": "npm run typecheck && npm run lint && npm run test:security && npm run test:workspace && npm run test:gateway && npm run test:gateway-service && npm run test:gateway-postgres && npm run test:app-state && npm run test:db && npm run gateway:build && npm test && npm run audit:security",
-    "planner:verify-ag-ui": "node --import tsx scripts/verify-ag-ui.ts"
+    "planner:verify-ag-ui": "node --import tsx scripts/verify-ag-ui.ts",
+    "planner:verify-review": "node --import tsx scripts/verify-plan-review.ts"
   },
   "dependencies": {
     "@ag-ui/core": "1.0.3",

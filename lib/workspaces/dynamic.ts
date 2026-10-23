@@ -1,4 +1,4 @@
-import {workspaceContextSchema,workspaceClarificationSchema} from "./context";
+import {workspaceContextSchema,workspaceClarificationSchema,workspaceReviewedDefinitionSchema} from "./context";
 import { buildAnalysisWorkspace } from "./analysis";
 import { z } from "zod";
 import {
@@ -25,9 +25,12 @@ export const dynamicWorkspaceRequestSchema = z
     limit: z.number().int().min(1).max(200).default(200),
     context: workspaceContextSchema.optional(),
     clarification: workspaceClarificationSchema.optional(),
+    action: z.enum(['generate','review','run_reviewed']).default('generate'),
+    reviewedPlan: workspaceReviewedDefinitionSchema.optional(),
   })
   .strict().superRefine((input,ctx)=>{
-    if(!input.context && !input.clarification && input.prompt.length<8)ctx.addIssue({code:"custom",path:["prompt"],message:"Describe your initial workspace in at least eight characters."});
+    if(!input.context && !input.clarification && !input.reviewedPlan && input.prompt.length<8)ctx.addIssue({code:"custom",path:["prompt"],message:"Describe your initial workspace in at least eight characters."});
+    if((input.action==='run_reviewed')!==Boolean(input.reviewedPlan) || input.action==='run_reviewed'&&(input.context||input.clarification))ctx.addIssue({code:'custom',path:['reviewedPlan'],message:'Run a reviewed definition on its own, or request a new plan.'});
   });
 
 export type WorkspaceIntent =
@@ -122,10 +125,10 @@ export type DynamicWorkspaceResponse = {
   queryPlan: WorkspaceQueryPlan;
   presentation?: WorkspacePresentation;
   planner?: {
-    mode: "ai" | "deterministic_fallback";
+    mode: "ai" | "deterministic_fallback" | "reviewed_plan";
     model: string | null;
     validated: true;
-    reason: "ai_plan" | "ai_not_configured" | "ai_plan_rejected";
+    reason: "ai_plan" | "ai_not_configured" | "ai_plan_rejected" | "reviewed_definition";
     failureCode?:'not_configured'|'authentication'|'quota'|'timeout'|'invalid_plan'|'unavailable';
     message?:string;
   };

@@ -5,7 +5,8 @@ import {EventEncoder} from '@ag-ui/encoder';
 import {EventType,PROTOCOL_VERSION,type Event} from '@ag-ui/core';
 import {guardRequest} from '@/lib/auth/session';
 import {readJsonLimited,securityResponse} from '@/lib/server/security';
-import {parseAgentRequest,clarificationId} from '@/lib/workspaces/ag-ui';
+import {parseAgentRequest,clarificationId,planReviewId} from '@/lib/workspaces/ag-ui';
+import {workspacePlanReviewSchema} from '@/lib/workspaces/plan-review';
 import {generateWorkspaceResponse} from '@/lib/server/workspace-generation';
 export const dynamic='force-dynamic';
 export async function POST(request:Request){
@@ -34,12 +35,21 @@ export async function POST(request:Request){
     const rawPayload=await response.json();closeStep();
     if(abort.signal.aborted)return;
     if(response.ok){
+     const reviewResult=workspacePlanReviewSchema.safeParse(rawPayload);
+     if(reviewResult.success){
+      const review=reviewResult.data;
+      const id=await planReviewId(run.threadId,review.definition);
+      emit({type:EventType.STATE_SNAPSHOT,snapshot:{reviewedPlan:review.definition}});
+      text('Your plan is ready to review. No result records have been fetched. Run it or ask for a change.');
+      emit({type:EventType.RUN_FINISHED,threadId:run.threadId,runId:run.runId,outcome:{type:'interrupt',interrupts:[{id,reason:'plan_review',message:'Review this plan before fetching data.',metadata:{review},responseSchema:{type:'string',enum:['run']}}]}});
+     }else{
      const payload=resultSchema.parse(rawPayload) as unknown as DynamicWorkspaceResponse;
      // Keep only definitions in shared state. Authorized result data travels once, in the final result.
      const {contextFromResponse}=await import('@/lib/workspaces/context');
      emit({type:EventType.STATE_SNAPSHOT,snapshot:{workspace:contextFromResponse(payload)}});
      text(payload.interpretation);
      emit({type:EventType.RUN_FINISHED,threadId:run.threadId,runId:run.runId,outcome:{type:'success'},result:payload});
+     }
     }else {
      const payload=z.object({error:z.string(),code:z.string(),requestId:z.string().uuid().optional()}).parse(rawPayload);
      if(payload.code==='unsupported_workspace_request'){

@@ -240,6 +240,18 @@ The normal Workspaces page is the presentation experience: enter a request, buil
 
 The Workspaces page starts with a focused request composer. If Morph needs clarification, the chat opens immediately, even before a workspace exists, and replies continue the original request. After successful generation, the main canvas displays the workspace beside that same conversation (below the canvas on smaller screens). Follow-ups keep the last successful response visible during planning, clarification, errors and cancellation. The panel records a bounded, session-local transcript; it is not sent as result data to the model or saved as query results. Clarification answers include only the unresolved request and question so the planner can resolve a short answer correctly. Data-access information, request interpretation and the approved query remain available through **Details**. **New workspace** clears the current conversation and query context.
 
+### Optional plan review
+
+**Build workspace** still fetches data immediately after planning and authorization. **Review plan** instead opens a chat card showing the proposed dataset, measure, grouping, filters, fields, time period and display format. Review requests require the AI planner and return definitions only: they do not call the query execution endpoint or create a successful workspace-run record. Catalogue discovery still checks the current identity and approved metadata.
+
+Ask for changes in chat to create a revised review, then select **Run this plan**. This performs a fresh session check, discovers the currently enabled catalogue, validates the complete definition and executes it through the Gateway. The reviewed query and display must round-trip exactly; unavailable fields, changed catalogue versions and limits that would require clamping are rejected. Running a reviewed definition does not invoke the AI a second time. The Safety details identify this as a revalidated reviewed plan rather than claiming a new AI generation.
+
+The chat's **Review changes before fetching data** option applies to subsequent requests until turned off. Discarding a review keeps the last successful workspace; a new workspace clears the pending review. Reviews remain session-local and contain no result rows or authorization grants. AG-UI uses a `plan_review` interrupt and an explicit `run` resume bound to the thread and canonical definition. Its digest correlates the review, not identity or permission; it is neither a signed authorization token nor a durable/one-time approval. Current Gateway checks are always authoritative.
+
+JSON clients can send `action: "review"` to `/api/workspaces/generate`, then `action: "run_reviewed"` with the returned `definition` as `reviewedPlan`. Omitting `action` preserves ordinary generation. The AG-UI browser flow uses the same service and checks.
+
+`npm run planner:verify-review` checks a live table review → donut revision → exact-definition execution over AG-UI, including the absence of an execution stage before approval. It uses the same `MORPH_BENCHMARK_URL` and optional owner-only `MORPH_BENCHMARK_TOKEN` configuration as the other live verifiers. It prints safe step metadata, not prompts or result records.
+
 ### Regression examples
 
 The three premium table → donut → filtered-donut requests remain developer regression fixtures, not a separate product mode. `npm run planner:verify-ag-ui` verifies those requests through the live AG-UI endpoint. The normal interface accepts users’ own requests and follow-ups.

@@ -1582,6 +1582,29 @@ button:focus-visible,a:focus-visible,input:focus-visible,summary:focus-visible {
 .workspace-chat-only { max-width: 880px; padding: 32px 24px; }
 .workspace-chat-only .workspace-intro h2 { font-size: 30px; line-height: 1.2; }
 .workspace-chat-only .workspace-chat { position: static; height: clamp(450px,65dvh,720px); }
+.prompt-build-actions { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+.prompt-build-actions .secondary-button { min-height:44px; font-size:12px; }
+.review-before-run { display:flex; align-items:flex-start; gap:8px; margin:0 0 12px; font-size:12px; line-height:1.5; color:var(--muted); cursor:pointer; }
+.review-before-run input { flex-shrink:0; margin-top:3px; accent-color:var(--ink); }
+.plan-review-card { padding:16px; border:1px solid var(--line); border-radius:12px; background:#f9fcf5; margin-bottom:16px; overflow-wrap:anywhere; }
+.plan-review-kicker { display:flex; align-items:center; gap:8px; font-size:10px; line-height:1.6; font-weight:600; color:#466b25; }
+.plan-review-card h4 { margin:12px 0 8px; font-size:16px; line-height:1.4; letter-spacing:-.02em; }
+.plan-review-card h4:focus { outline:2px solid #8fad66; outline-offset:4px; border-radius:2px; }
+.plan-review-card p { margin:8px 0; font-size:12px; line-height:1.6; color:var(--muted); }
+.plan-review-card dl { margin:16px 0; }
+.plan-review-card dl > div { display:grid; grid-template-columns:72px minmax(0,1fr); gap:12px; padding:8px 0; border-bottom:1px solid var(--line); font-size:12px; line-height:1.5; }
+.plan-review-card dt { color:var(--muted); }
+.plan-review-card dd { margin:0; font-weight:600; color:var(--ink); }
+.plan-review-filters > strong, .plan-review-card details { font-size:12px; }
+.plan-review-filters ul { padding-left:16px; margin:8px 0 12px; font-size:12px; line-height:1.7; color:var(--muted); }
+.plan-review-filters li { margin:4px 0; }
+.plan-review-card details { margin:12px 0; }
+.plan-review-card details > summary { cursor:pointer; color:var(--muted); }
+.plan-review-card .plan-review-scope { font-size:11px; }
+.plan-review-actions { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-top:16px; }
+.plan-review-actions .generate-button, .plan-review-actions .secondary-button { font-size:11px; min-height:40px; padding:8px 12px; }
+.plan-review-dismiss { background:transparent; border:0; color:var(--muted); font-size:11px; text-decoration:underline; padding:8px; cursor:pointer; min-height:40px; }
+.plan-review-actions button:disabled { opacity:.45; cursor:not-allowed; }
 @media(max-width:620px){.workspace-chat-only {padding:24px 12px;}.workspace-chat-only .workspace-intro h2{font-size:25px;}}
 
 /* A single, guided story replaces the old persona tabs and presentation toggle. */

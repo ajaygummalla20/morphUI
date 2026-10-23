@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
-import {test} from 'node:test';
+import {test,beforeEach} from 'node:test';
 import {POST} from '../app/api/workspaces/agent/route';
 import {consumeWorkspaceStream, createAgentInput} from '../lib/workspaces/ag-ui-client';
+import {stubReviewPlanner} from './helpers/review-planner';
+beforeEach(async()=>{
+ const {env}=await import('cloudflare:workers');
+ await (env as unknown as {DB:{prepare:(sql:string)=>{run:()=>Promise<unknown>}}}).DB.prepare('DELETE FROM request_limits').run();
+});
 const request=(body:unknown,origin='http://localhost')=>new Request('http://localhost/api/workspaces/agent',{method:'POST',headers:{'Content-Type':'application/json',Origin:origin,Accept:'text/event-stream'},body:JSON.stringify(body)});
 test('AG-UI runs the existing authorized pipeline and reports actual steps',async()=>{
  const input=await createAgentInput('Show pending endorsements grouped by type. Table only.');
@@ -60,4 +65,35 @@ test('planner failures preserve a safe reference that matches server diagnostics
  await assert.rejects(consumeWorkspaceStream(response,input),error=>{
   const failure=error as Error&{requestId?:string};assert.match(failure.requestId??'',/^[a-f0-9-]{36}$/);assert.ok(logs.some(line=>JSON.parse(line).requestId===failure.requestId));return true;
  });
+});
+
+test('AG-UI review pauses before query execution and runs the same plan on explicit resume',async t=>{
+ const model=stubReviewPlanner(t);
+ const {consumeWorkspaceAgent,createReviewedAgentInput}=await import('../lib/workspaces/ag-ui-client');
+ const input=await createAgentInput('Show pending endorsements grouped by type. Table only.',undefined,undefined,'review-thread',{review:true});
+ const stages:string[]=[];
+ const outcome=await consumeWorkspaceAgent(await POST(request(input)),input,stage=>stages.push(stage));
+ assert.equal(outcome.type,'plan_review');
+ if(outcome.type!=='plan_review')throw new Error('Review was not returned');
+ assert.deepEqual(stages,['catalogue','planning']);
+ assert.equal('rows' in outcome.review,false);
+ const approved=await createReviewedAgentInput('Show pending endorsements grouped by type. Table only.',outcome.review.definition,input.threadId);
+ const completed=await consumeWorkspaceAgent(await POST(request(approved)),approved);
+ assert.equal(completed.type,'workspace');
+ if(completed.type!=='workspace')throw new Error('Workspace was not returned');
+ assert.deepEqual(completed.response.queryPlan,outcome.review.definition.context.plan);
+ assert.equal(model.calls(),1);
+ approved.threadId='unrelated-thread';assert.equal((await POST(request(approved))).status,400);
+});
+
+test('a truncated plan review and a mismatched review interrupt cannot become a ready plan',async t=>{
+ stubReviewPlanner(t);
+ const {consumeWorkspaceAgent}=await import('../lib/workspaces/ag-ui-client');
+ const input=await createAgentInput('Show all policies',undefined,undefined,'review-truncated',{review:true});
+ const text=await (await POST(request(input))).text();
+ assert.match(text,/plan_review/);
+ const truncated=text.slice(0,text.lastIndexOf('data:'));
+ await assert.rejects(consumeWorkspaceAgent(new Response(truncated,{headers:{'Content-Type':'text/event-stream'}}),input),/interrupted|invalid/i);
+ const mismatched=text.replace(/"id":"review-[a-f0-9]+"/,'"id":"review-wrong"');
+ await assert.rejects(consumeWorkspaceAgent(new Response(mismatched,{headers:{'Content-Type':'text/event-stream'}}),input),/invalid/i);
 });
